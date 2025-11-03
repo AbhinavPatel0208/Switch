@@ -372,21 +372,71 @@
 
 ---
 
-### 8. 🌊 Stream Processing with Apache Flink
-- [ ] Flink Architecture (JobManager, TaskManager)
-- [ ] DataStream API
-- [ ] Table API & SQL
-- [ ] Event Time vs Processing Time
-- [ ] Windows (Tumbling, Sliding, Session)
-- [ ] State Management & Keyed Streams
-- [ ] Checkpointing, Savepoints, Fault Tolerance
-- [ ] Kafka-Flink Integration (Exactly Once)
-- [ ] CEP (Complex Event Processing)
-- [ ] Watermarks & Late Events Handling
-- [ ] RocksDB State Backend
-- [ ] Flink on Kubernetes (Session & Application Mode)
-- [ ] Scaling & Backpressure Handling
-- [ ] Common Interview Topics: Time Characteristics, State, Windowing, Exactly-Once Semantics
+### 8. Stream Processing with Apache Flink (Production L3 Ready)
+
+- [ ] **Flink Architecture Deep Dive**
+  - JobManager, TaskManager, Dispatcher, ResourceManager
+  - Slot sharing, Task vs Operator parallelism
+  - Checkpoint Coordinator + Barrier alignment
+
+- [ ] **Execution Model**
+  - Stream vs Batch mode
+  - DataStream API vs Table API vs SQL
+  - Exactly-once, At-least-once, At-most-once semantics
+
+- [ ] **Time Semantics**
+  - Processing Time vs Event Time vs Ingestion Time
+  - Watermark generation strategies:
+    - `Periodic` (Ascending, Bounded Out-of-Orderness)
+    - `Punctuated`
+    - Custom `WatermarkStrategy`
+  - **Late Events Handling**
+    - `allowedLateness()`
+    - Side outputs (`OutputTag`)
+    - Late data to DLQ/Kafka
+
+- [ ] **Windowing (All Types)**
+  - Tumbling, Sliding, Session, Global
+  - Time vs Count windows
+  - `WindowAssigner`, `Trigger`, `Evictor`
+  - **Interview Problem**: 5-min sliding window on transaction volume with late tolerance
+
+- [ ] **State Management**
+  - Keyed vs Operator vs Broadcast State
+  - State backends: Heap, **RocksDB** (compaction, TTL)
+  - `ValueState`, `ListState`, `MapState`, `ReducingState`, `AggregatingState`
+  - State TTL, Queryable State
+  - **Your Resume**: Deduplication using `MapState<txId, status>`
+
+- [ ] **Fault Tolerance & Recovery**
+  - Checkpointing (incremental, unaligned)
+  - Savepoints (manual, versioned, drain)
+  - Restart strategies: Fixed delay, Failure rate, Fallback
+  - **Exactly-Once with Kafka**
+    - `enable.idempotence=true`
+    - Transactional producer + Flink sink
+  - **Your Resume**: "Automated savepoint + restore runbooks"
+
+- [ ] **Backpressure & Scaling**
+  - Credit-based flow control
+  - Detecting backpressure via metrics
+  - Fixes: `rebalance()`, `rescale()`, increase parallelism
+  - **Your Resume**: "Fixed skewed keys → 35% less downtime"
+
+- [ ] **Complex Event Processing (CEP)**
+  - Pattern API: `begin()`, `next()`, `followedBy()`, `where()`, `oneOrMore()`, `times()`
+  - Contiguity: `STRICT`, `RELAXED`, `SKIP_TO_NEXT`
+  - **Interview Example**: Detect 3 failed transactions from same user in 10 mins
+  - Timeout handling with side output
+
+- [ ] **Flink SQL & Table API**
+  - DDL: `CREATE TABLE` with Kafka connector
+  - DML: `INSERT INTO`, `SELECT ... GROUP BY WINDOW`
+  - Tumbling window query:
+    ```sql
+    SELECT userId, COUNT(*) 
+    FROM transactions 
+    GROUP BY TUMBLE(eventTime, INTERVAL '5' MINUTE), userId;
 
 ---
 
