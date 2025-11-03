@@ -2,7 +2,7 @@
 
 ## Courses and Topics
 
-- [ ] [Complete Git & GitHub Course](https://youtu.be/apGV9Kg7ics)
+- [x] [Complete Git & GitHub Course](https://youtu.be/apGV9Kg7ics)
 - [ ] [Introduction to Programming](https://youtu.be/wn49bJOYAZM)
     - [ ] [Types of languages](https://youtu.be/wn49bJOYAZM?t=171)
     - [ ] [Memory management](https://youtu.be/wn49bJOYAZM?t=1488)
