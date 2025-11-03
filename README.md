@@ -212,8 +212,6 @@
 - [ ] Square Root Decomposition
 
 
-
-
 ## 🗂️ Topics & Checklist
 
 ---
@@ -238,6 +236,8 @@
 - [ ] **DB Design**
   - Normal Forms (1NF to 3NF)
   - ER Diagrams & Relational Mapping
+  - Denormalization & Indexing Strategy
+  - Query Optimization Best Practices
 
 ---
 
@@ -246,49 +246,72 @@
   - Abstract Class vs Interface
   - SOLID Principles
   - Composition over Inheritance
+  - Design Patterns: Factory, Singleton, Strategy, Builder, Observer
 - [ ] **Collections Framework**
   - List, Set, Map, Queue
   - HashMap Internal Working, Fail-Fast vs Fail-Safe
-  - Concurrent Collections
+  - Concurrent Collections (ConcurrentHashMap, CopyOnWriteArrayList)
+  - Stream Parallelism and ForkJoinPool
 - [ ] **Streams API & Functional Programming**
   - filter, map, flatMap, reduce, collect
   - Custom Collector
+  - Optional, Stream vs ParallelStream
 - [ ] **Lambdas**
   - Functional Interfaces
   - Method References, Constructor References
 - [ ] **Multithreading**
   - Runnable, Callable, ExecutorService
-  - Thread Pooling, Synchronization
+  - Thread Pooling, Synchronization, Locks
   - Deadlock, Livelock, Starvation
-- [ ] **JVM & Memory**
-  - Stack vs Heap, GC Algorithms
+  - CompletableFuture and Parallel Streams
+- [ ] **JVM & Performance**
+  - Stack vs Heap, GC Algorithms (G1, ZGC)
   - Classloader, JIT Compiler
   - OutOfMemoryError and how to debug
+  - Profiling (JFR, VisualVM, Async Profiler)
+  - Memory Leaks (ThreadLocal, ClassLoader)
+  - Connection Pool Optimization (HikariCP)
 
 ---
 
 ### 3. 🧱 Spring Boot & Microservices
 - [ ] **Spring Boot Fundamentals**
   - Starters, Autoconfiguration, Main Class Bootstrapping
+  - Application Layers: Controller, Service, Repository
 - [ ] **IOC & DI**
   - @Component, @Autowired, @Bean, @Configuration
+  - Constructor Injection vs Field Injection
 - [ ] **Configuration & Profiles**
   - application.yml/properties
   - @Value, @ConfigurationProperties
+  - Profiles & Environment-Specific Configurations
 - [ ] **REST APIs**
-  - @RestController, ResponseEntity, Exception Handling
-  - DTOs and Validation (JSR-380)
+  - @RestController, ResponseEntity, Exception Handling (@ControllerAdvice)
+  - DTOs and Validation (JSR-380, groups)
   - Swagger/OpenAPI Documentation
+  - Idempotency Keys, API Versioning
+  - Correlation ID & Structured Logging (MDC)
 - [ ] **Testing**
-  - Unit Tests (JUnit, Mockito)
+  - Unit Tests (JUnit 5, Mockito)
   - Integration Testing with @SpringBootTest
+  - Testcontainers (PostgreSQL/Redis/Kafka)
+  - Spring Cloud Contract Testing
 - [ ] **Inter-Service Communication**
   - RESTTemplate vs WebClient
-  - Feign Clients
-  - Kafka/RabbitMQ (Async)
-- [ ] **Design Patterns**
+  - Feign Clients (LoadBalanced)
+  - Kafka/RabbitMQ (Async Communication)
+- [ ] **Resilience & Patterns**
+  - Resilience4j: Retry, CircuitBreaker, RateLimiter, Bulkhead
+  - Centralized Exception Handling & Error Codes
+  - Distributed Tracing (Sleuth / OpenTelemetry)
   - API Gateway, Circuit Breaker, Retry, Bulkhead
   - Rate Limiting, Idempotency
+- [ ] **Observability**
+  - Micrometer Metrics → Prometheus + Grafana
+  - Centralized Logging (ELK Stack)
+  - Health Checks (/actuator/health)
+  - Readiness & Liveness Probes (for K8s)
+  - Trace Correlation Across Services
 
 ---
 
@@ -297,9 +320,11 @@
 - [ ] Spring Cloud Config Server
 - [ ] API Gateway (Spring Cloud Gateway)
 - [ ] Feign Clients
-- [ ] Distributed Tracing (Sleuth, Zipkin)
+- [ ] Distributed Tracing (Sleuth, Zipkin, OpenTelemetry)
 - [ ] Load Balancing (Ribbon/Feign)
 - [ ] Resilience4j: Retry, CircuitBreaker, RateLimiter
+- [ ] Distributed Configurations & Secrets Management
+- [ ] Centralized Logging & Tracing Setup
 
 ---
 
@@ -308,8 +333,12 @@
 - [ ] Stateless JWT-based Auth
 - [ ] Role-Based Access Control (RBAC)
 - [ ] OAuth2 Protocol Deep Dive
-- [ ] CORS & CSRF Protection
+- [ ] OAuth2 Login & Authorization Server
 - [ ] Password Encoding (BCryptPasswordEncoder)
+- [ ] CORS & CSRF Protection
+- [ ] Method-Level Security (@PreAuthorize, @Secured)
+- [ ] Custom Filters & Exception Handling
+- [ ] Security Best Practices in Microservices
 
 ---
 
@@ -322,18 +351,24 @@
 - [ ] Cascade Types & Orphan Removal
 - [ ] Entity Lifecycle Methods
 - [ ] First & Second-Level Caching
+- [ ] N+1 Problem & Performance Tuning
+- [ ] Pagination & Sorting with Specifications
+- [ ] Optimistic vs Pessimistic Locking
 
 ---
 
 ### 7. 🐍 Kafka
 - [ ] Kafka Basics (Broker, Topic, Partition, Consumer Group)
 - [ ] Kafka Producer/Consumer APIs
-- [ ] Kafka with Spring Boot
+- [ ] Kafka with Spring Boot (spring-kafka)
 - [ ] Consumer Offsets & Rebalancing
-- [ ] Kafka Streams (Basic intro)
-- [ ] Kafka Exactly-Once Semantics
-- [ ] Kafka Connect (optional)
+- [ ] Kafka Streams (Transformations, State Stores)
+- [ ] Kafka Exactly-Once Semantics (Idempotent Producer, Transactions)
+- [ ] Dead Letter Topics & Retry Topics
+- [ ] Schema Registry (Avro / Protobuf)
+- [ ] Kafka Connect (CDC, DB Sync)
 - [ ] Zookeeper Role & Importance
+- [ ] Monitoring with Kafka Exporter & Prometheus
 
 ---
 
@@ -345,8 +380,13 @@
 - [ ] Windows (Tumbling, Sliding, Session)
 - [ ] State Management & Keyed Streams
 - [ ] Checkpointing, Savepoints, Fault Tolerance
-- [ ] Kafka-Flink Integration
+- [ ] Kafka-Flink Integration (Exactly Once)
 - [ ] CEP (Complex Event Processing)
+- [ ] Watermarks & Late Events Handling
+- [ ] RocksDB State Backend
+- [ ] Flink on Kubernetes (Session & Application Mode)
+- [ ] Scaling & Backpressure Handling
+- [ ] Common Interview Topics: Time Characteristics, State, Windowing, Exactly-Once Semantics
 
 ---
 
@@ -354,9 +394,11 @@
 - [ ] Redis Setup + Integration with Spring
 - [ ] @Cacheable, @CacheEvict, @Caching
 - [ ] TTL, LRU & Eviction Policies
-- [ ] Redis Pub/Sub & Streams (Optional)
+- [ ] Redis Pub/Sub & Streams
 - [ ] Distributed Caching Patterns
 - [ ] Cache Consistency & Invalidation
+- [ ] Cache-Aside, Write-Through, Write-Behind Strategies
+- [ ] Redis as Rate Limiter / Leaderboard Example
 
 ---
 
@@ -366,61 +408,96 @@
 - [ ] Spring WebSocket with SockJS
 - [ ] Message Broker (SimpleBroker vs External)
 - [ ] Real-time Notifications & Broadcasting
+- [ ] WebSocket Security & Scaling (Sticky Sessions, Redis Pub/Sub)
 
 ---
 
-### 11. 🧠 DSA & System Design
-- [ ] Arrays, Strings, Hashing, Stacks, Queues
-- [ ] Sliding Window, Two Pointers
-- [ ] Trees & Graphs
-- [ ] Recursion & DP (Top K problems)
-- [ ] LLD (Object Modelling, OOP principles)
-- [ ] HLD (Load Balancer, Scaling, DB Design)
-- [ ] Design Patterns (Factory, Singleton, Strategy)
-- [ ] Case Studies: Rate Limiter, URL Shortener, Notification System
+### 11. 🧱 System Design & Architecture
+- [ ] RESTful Service Design
+- [ ] Event-Driven Architecture
+- [ ] Message Queues vs Streams
+- [ ] API Gateway Patterns
+- [ ] Caching Strategies (Cache-Aside, Write-Through)
+- [ ] Database Sharding & Partitioning
+- [ ] Rate Limiting, Circuit Breaker, Retry
+- [ ] Idempotency & Outbox Pattern
+- [ ] CAP Theorem, Consistency Models
+- [ ] Load Balancing, Fault Tolerance, Failover
+- [ ] Observability (Metrics, Logs, Traces)
+- [ ] Scaling Strategies (Horizontal, Vertical)
+- [ ] Design Case Studies: Notification Service, Order Service, URL Shortener
 
 ---
 
 ### 12. 🌍 DevOps & Monitoring
-- [ ] Dockerfile, Docker Compose for Spring Apps
+- [ ] Dockerfile (Multi-Stage Build)
+- [ ] Docker Compose for Microservices
+- [ ] Kubernetes Basics (Deployment, Service, Ingress)
+- [ ] ConfigMap & Secrets
+- [ ] Readiness & Liveness Probes
+- [ ] HPA (Horizontal Pod Autoscaler)
 - [ ] CI/CD with Jenkins or GitHub Actions
+- [ ] Blue-Green & Canary Deployments
 - [ ] Monitoring with Prometheus + Grafana
-- [ ] ELK Stack (Elasticsearch, Logstash, Kibana)
+- [ ] Centralized Logging (ELK Stack)
+- [ ] Tracing with Zipkin / Tempo / Jaeger
 - [ ] Health Checks, Metrics Exposure
+- [ ] Alerting & Dashboards for Uptime / MTTR
 
 ---
 
 ### 13. ☁️ AWS Cloud Fundamentals (Developer & Deployment Focus)
-
 - [ ] **Core AWS Services**
   - EC2 (Instances, Security Groups, Key Pairs)
   - S3 (Object Storage, Versioning, Lifecycle Policies)
   - IAM (Users, Roles, Policies)
   - RDS (PostgreSQL, MySQL on AWS)
   - CloudWatch (Monitoring, Alarms, Logs)
-
 - [ ] **Networking & Access**
   - VPC Basics (Subnets, Route Tables, NAT Gateways)
   - Load Balancer (ALB vs NLB)
   - Security Groups vs NACLs
   - IAM Role usage for EC2 and Lambda
-
 - [ ] **CI/CD & DevOps**
   - CodePipeline, CodeBuild basics
   - Deploying Spring Boot using Elastic Beanstalk
   - ECS with Fargate (Optional but good)
-
 - [ ] **Serverless Architecture**
   - Lambda Functions with Java
   - API Gateway integration with Lambda
   - EventBridge and SQS (intro only)
-
 - [ ] **Storage, Caching, Queues**
   - DynamoDB Basics
   - SQS (FIFO vs Standard Queue)
   - ElastiCache (Redis with AWS)
-
 - [ ] **Best Practices**
   - Cost Optimization Tips
   - Cloud Security Basics
   - Tagging, Billing Alerts
+  - High Availability & Disaster Recovery
+
+---
+
+### 14. 💡 Advanced & MNC-Focused Topics
+- [ ] Distributed Transactions & Sagas
+- [ ] CQRS & Event Sourcing
+- [ ] API Observability (Tracing, Metrics, Logs)
+- [ ] Message-Driven Architecture Patterns
+- [ ] Async Communication (Kafka, RabbitMQ)
+- [ ] CAP, ACID, BASE Theorem Deep Dive
+- [ ] Chaos Engineering & Resilience Testing
+- [ ] Secrets Management (Vault / AWS Secrets Manager)
+- [ ] Feature Flags & Rollouts
+- [ ] Performance Optimization (p95/p99 Latency)
+- [ ] Cloud Native Design Principles (12-Factor App)
+- [ ] Interview Focused Topics:
+  - Spring Boot Internals
+  - Feign vs WebClient
+  - Resilience4j vs Hystrix
+  - Flink vs Spark Differences
+  - Kafka Exactly-Once, Idempotency
+  - JVM Optimization, GC Logs, Thread Dumps
+
+---
+
+> 🎯 **Goal:** End-to-end roadmap for mastering Java Backend Development with Spring Boot, Cloud, Kafka, and Flink — covering all MNC-level interview concepts and real-world implementation skills.
