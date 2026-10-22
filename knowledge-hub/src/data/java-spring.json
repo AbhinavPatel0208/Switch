@@ -1,0 +1,188 @@
+{
+  "category": "Java & Spring Boot",
+  "icon": "FaJava",
+  "color": "#f59e0b",
+  "subcategories": [
+    "Java Core & Concurrency",
+    "JVM & Memory Architecture",
+    "Spring Boot Internals",
+    "Spring Security & OAuth2"
+  ],
+  "topics": [
+    {
+      "id": "java-core-001",
+      "title": "HashMap Internals, Treeification & Concurrency Pitfalls",
+      "category": "Java & Spring Boot",
+      "subcategory": "Java Core & Concurrency",
+      "difficulty": "hard",
+      "tags": [
+        "java",
+        "hashmap",
+        "concurrency",
+        "treeification",
+        "red-black-tree"
+      ],
+      "summary": "Deep dive into HashMap hashing, bucket index calculation, collision handling with Red-Black trees, and ConcurrentHashMap lock striping.",
+      "content": "## HashMap Internals & Memory Architecture\n\n### Bucket Array & Hash Calculation\nHashMap uses an array of `Node<K,V>` buckets with default initial capacity `16` and load factor `0.75`.\n\n```java\n// 1. Bit-shift hash calculation to spread high bits to low bits:\nstatic final int hash(Object key) {\n    int h;\n    return (key == null) ? 0 : (h = key.hashCode()) ^ (h >>> 16);\n}\n\n// 2. Fast modulo via bitwise AND (Capacity must always be a power of 2!):\nint index = (n - 1) & hash;\n```\n\n### Java 8 Treeification Mechanism\nIn Java 7, collisions formed a linked list with $O(n)$ search time. Java 8 converts a bucket to a **Red-Black Tree** ($O(\\log n)$ search) when:\n1. The bucket length reaches **`TREEIFY_THRESHOLD = 8`**.\n2. Total table capacity is at least **`MIN_TREEIFY_CAPACITY = 64`** (otherwise, it simply resizes the array).\n3. If elements decrease to **`UNTREEIFY_THRESHOLD = 6`**, it converts back to a linked list.\n\n```\nBucket Collision Progression:\nLinked List (< 8 elements)      Red-Black Tree (>= 8 elements)\n[Head] ──► [Node] ──► [Node]       ┌───[Root]───┐\n                                  /              \\\n                            [Left Child]    [Right Child]\n```\n\n### Why ConcurrentHashMap Replaces Hashtable\n- **Hashtable / Collections.synchronizedMap**: Locks the **entire map** for every operation using a single monitor lock. All threads queue up.\n- **ConcurrentHashMap (Java 8+)**: Uses fine-grained **Node-level locking (`synchronized` on the bucket head node)** and CAS (Compare-And-Swap) for empty bucket insertions. Different threads write to different buckets simultaneously with zero blocking!",
+      "references": [
+        {
+          "title": "OpenJDK: HashMap Source Code",
+          "url": "https://github.com/openjdk/jdk/blob/master/src/java.base/share/classes/java/util/HashMap.java"
+        }
+      ],
+      "interviewTip": "Explain why table size is strictly a power of 2: Because '(n - 1) & hash' is equivalent to 'hash % n' only when n is 2^k, and bitwise AND is exponentially faster than division.",
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "java-loom-001",
+      "title": "Java 21 Virtual Threads (Project Loom) & Carrier Thread Scheduling",
+      "category": "Java & Spring Boot",
+      "subcategory": "Java Core & Concurrency",
+      "difficulty": "hard",
+      "tags": [
+        "java-21",
+        "virtual-threads",
+        "loom",
+        "concurrency",
+        "carrier-threads"
+      ],
+      "summary": "How Virtual Threads decouple thread creation from OS threads, unmounting during blocking I/O to achieve massive concurrency.",
+      "content": "## Java 21 Virtual Threads (Project Loom)\n\n### Platform Threads vs Virtual Threads\n\n| Attribute | Platform (OS) Thread | Virtual Thread (Java 21) |\n| :--- | :--- | :--- |\n| **Mapping** | 1:1 with OS Kernel Thread | $M:N$ (Millions of virtual threads onto few carrier threads) |\n| **Memory Stack** | ~1MB fixed OS stack | Starts at ~few hundred bytes in JVM heap, grows dynamically |\n| **Creation Cost** | Expensive (system call to OS) | Negligible (cheap Java heap object) |\n| **Context Switch** | Slow (kernel trap / CPU register swap) | Fast (user-space JVM continuation unmount) |\n\n### The Continuation Mechanism (Mounting & Unmounting)\nWhen code inside a Virtual Thread calls a blocking operation (`SocketChannel.read()`, `Thread.sleep()`, JDBC query):\n1. The underlying standard library detects the block.\n2. The Virtual Thread **unmounts** from its Carrier Thread (ForkJoinPool worker).\n3. The Carrier Thread is immediately free to run other Virtual Threads.\n4. When I/O completes, the OS notifies the JVM (via epoll/kqueue), and the Virtual Thread is **mounted back** onto any available Carrier Thread.\n\n```\n100,000 Virtual Threads ──► [JVM Scheduler] ──► 8 Carrier OS Threads (CPU Cores)\n```\n\n### Pinning Trap: What to Avoid\nA Virtual Thread becomes **pinned** to its carrier thread (cannot unmount) if it blocks inside:\n1. A `synchronized` block/method (Replace with `ReentrantLock`!).\n2. A native JNI method call.",
+      "references": [
+        {
+          "title": "JEP 444: Virtual Threads",
+          "url": "https://openjdk.org/jeps/444"
+        }
+      ],
+      "interviewTip": "Emphasize that Virtual Threads are intended for high-throughput I/O-bound microservices, NOT CPU-intensive tasks (where carrier threads would remain fully occupied).",
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "java-pool-001",
+      "title": "ThreadPoolExecutor Architecture, Rejection Policies & Tuning",
+      "category": "Java & Spring Boot",
+      "subcategory": "Java Core & Concurrency",
+      "difficulty": "hard",
+      "tags": [
+        "concurrency",
+        "threadpoolexecutor",
+        "queues",
+        "rejection-policy"
+      ],
+      "summary": "Master ThreadPoolExecutor sizing formulas, core vs max pool dynamics, bounded vs unbounded queues, and rejection policies.",
+      "content": "## ThreadPoolExecutor Deep Dive\n\n### Core Execution Flow\nWhen a new task is submitted via `execute(Runnable)`:\n1. If `activeThreads < corePoolSize`: Create a new worker thread to run the task immediately.\n2. If `activeThreads >= corePoolSize`: Attempt to enqueue the task into the **WorkQueue**.\n3. If queue is full AND `activeThreads < maxPoolSize`: Spawn a new non-core thread to run the task.\n4. If queue is full AND `activeThreads >= maxPoolSize`: Invoke the **RejectedExecutionHandler**!\n\n```\nTask Submitted \n      │\n      ▼\nactive < corePoolSize? ──(Yes)──► Create Core Thread\n      │ (No)\n      ▼\nEnqueue into WorkQueue? ──(Yes)──► Queued for Worker\n      │ (No, Queue Full!)\n      ▼\nactive < maxPoolSize? ──(Yes)──► Create Non-Core Thread\n      │ (No, Pool Full!)\n      ▼\nInvoke Rejection Policy (Abort / CallerRuns / Discard)\n```\n\n### Production Configuration Example\n```java\nThreadPoolExecutor executor = new ThreadPoolExecutor(\n    10,                                  // corePoolSize\n    50,                                  // maximumPoolSize\n    60L, TimeUnit.SECONDS,               // keepAliveTime for idle non-core threads\n    new ArrayBlockingQueue<>(500),       // Bounded queue (Never use unbounded LinkedBlockingQueue in prod!)\n    new NamedThreadFactory(\"order-worker-\"),\n    new ThreadPoolExecutor.CallerRunsPolicy() // Throttles producer by running task on calling thread\n);\n```\n\n### Thread Pool Sizing Formulas\n- **CPU-Bound Tasks**: $\\text{Threads} = \\text{CPU Cores} + 1$ (minimizes context switching).\n- **I/O-Bound Tasks**: $\\text{Threads} = \\text{CPU Cores} \\times \\left(1 + \\frac{\\text{Wait Time}}{\\text{Compute Time}}\\right)$",
+      "references": [
+        {
+          "title": "Brian Goetz: Java Concurrency in Practice",
+          "url": "https://jcip.net/"
+        }
+      ],
+      "interviewTip": "Never use Executors.newFixedThreadPool() or newCachedThreadPool() in production! newFixed uses an unbounded queue (OOM risk) and newCached spawns Integer.MAX_VALUE threads (CPU thrashing).",
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "java-jvm-001",
+      "title": "JVM Memory Model: Stack vs Heap, Metaspace & GC (G1 vs ZGC)",
+      "category": "Java & Spring Boot",
+      "subcategory": "JVM & Memory Architecture",
+      "difficulty": "expert",
+      "tags": [
+        "jvm",
+        "garbage-collection",
+        "g1gc",
+        "zgc",
+        "metaspace",
+        "oom"
+      ],
+      "summary": "Understand JVM memory spaces, object headers, garbage collection pauses, G1 GC regions, and ZGC sub-millisecond pauses.",
+      "content": "## JVM Memory Model & Modern Garbage Collectors\n\n### Memory Areas\n- **Heap**: Shared across threads. Stores all class instances and arrays. Divided into Young Gen (Eden, S0, S1) and Old Gen.\n- **Stack**: Private per thread. Stores primitive local variables and references to heap objects in Stack Frames.\n- **Metaspace**: Off-heap native memory. Stores class metadata, bytecode, method structures (replaced PermGen in Java 8).\n\n```\nJVM Memory Layout:\n┌────────────────────────────────────────────────────────┐\n│ Heap (Shared, GC-Managed)                              │\n│ ┌─────────────────────────┐  ┌───────────────────────┐ │\n│ │ Young Gen (Eden, S0, S1)│  │ Old Generation (Tenured)│\n│ └─────────────────────────┘  └───────────────────────┘ │\n└────────────────────────────────────────────────────────┘\n┌────────────────────────────────────────────────────────┐\n│ Native Memory (Off-Heap)                               │\n│ ├── Metaspace (Class Metadata)                         │\n│ ├── Thread Stacks (1MB per thread)                     │\n│ └── Direct Byte Buffers (Netty zero-copy I/O)         │\n└────────────────────────────────────────────────────────┘\n```\n\n### G1 GC vs ZGC Comparison\n\n| Feature | G1 GC (Default Java 9+) | ZGC (Production Java 17+) |\n| :--- | :--- | :--- |\n| **Architecture** | Memory divided into ~2,048 equal regions (1MB to 32MB) | Region-based, colored pointers, load barriers |\n| **Pause Times** | 50ms - 200ms (Soft goal tunable via `-XX:MaxGCPauseMillis`) | **Sub-millisecond (< 1ms)** regardless of heap size! |\n| **Max Heap Size** | Up to ~64GB | **Terabytes (up to 16TB)** with zero pause increase |\n| **Compaction** | Incremental evacuation pause | Concurrent compaction while Java threads run |\n\n### Debugging OutOfMemoryError (OOM)\n- `java.lang.OutOfMemoryError: Java heap space`: Memory leak (e.g., static collections, unclosed ThreadLocal, connection leaks).\n- `java.lang.OutOfMemoryError: Metaspace`: Too many dynamically generated classes (CGLIB, classloader leak).\n- **Diagnostics**: Analyze heap dumps using Eclipse Memory Analyzer (MAT) via `-XX:+HeapDumpOnOutOfMemoryError`.",
+      "references": [
+        {
+          "title": "Oracle JVM Garbage Collection Tuning Guide",
+          "url": "https://docs.oracle.com/en/java/javase/17/gctuning/"
+        }
+      ],
+      "interviewTip": "Explain colored pointers and load barriers in ZGC: ZGC stores reference state in pointer metadata bits and intercepts references on the fly to perform concurrent evacuation.",
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "spring-boot-001",
+      "title": "Spring Boot Auto-Configuration & Bean Lifecycle Hooks",
+      "category": "Java & Spring Boot",
+      "subcategory": "Spring Boot Internals",
+      "difficulty": "medium",
+      "tags": [
+        "spring-boot",
+        "auto-configuration",
+        "bean-lifecycle",
+        "ioc",
+        "conditions"
+      ],
+      "summary": "How Spring Boot auto-configures beans via @Conditional annotations and standard ApplicationContext lifecycle hooks.",
+      "content": "## Spring Boot Auto-Configuration & IoC Container\n\n### Auto-Configuration Under the Hood\nWhen `@SpringBootApplication` starts:\n1. `@EnableAutoConfiguration` reads configuration class names from:\n   `META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports`.\n2. Each auto-configuration class is evaluated against conditional annotations:\n   - `@ConditionalOnClass`: Applies only if specific JAR classes are in classpath (e.g. `KafkaTemplate.class`).\n   - `@ConditionalOnMissingBean`: Backs off if the developer already declared their own `@Bean`.\n   - `@ConditionalOnProperty`: Evaluates `application.yml` flags.\n\n```java\n@AutoConfiguration\n@ConditionalOnClass(DataSource.class)\n@ConditionalOnProperty(prefix = \"spring.datasource\", name = \"url\")\npublic class DataSourceAutoConfiguration {\n    \n    @Bean\n    @ConditionalOnMissingBean\n    public DataSource dataSource(DataSourceProperties properties) {\n        return properties.initializeDataSourceBuilder().build();\n    }\n}\n```\n\n### Spring Bean Lifecycle Phases\n\n```\n1. BeanDefinition Loading\n2. Instantiation (Constructor call)\n3. Dependency Injection (Field/Setter/Constructor injection)\n4. BeanNameAware / ApplicationContextAware callbacks\n5. BeanPostProcessor: postProcessBeforeInitialization\n6. @PostConstruct / InitializingBean.afterPropertiesSet()\n7. Custom init-method\n8. BeanPostProcessor: postProcessAfterInitialization (AOP Proxies created here!)\n9. Ready for Service\n10. @PreDestroy / DisposableBean.destroy() on context shutdown\n```\n\n### Why Constructor Injection is Mandatory\n- Makes dependencies `final` (immutable thread safety).\n- Prevents `NullPointerException` during unit tests without needing Spring reflection.\n- Detects circular dependencies immediately during startup.",
+      "references": [
+        {
+          "title": "Spring Framework Documentation: Bean Lifecycle",
+          "url": "https://docs.spring.io/spring-framework/reference/core/beans/factory-nature.html"
+        }
+      ],
+      "interviewTip": "Point out that Spring AOP proxies (like @Transactional and @Async) are created in the BeanPostProcessor afterInitialization phase.",
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "spring-aop-001",
+      "title": "Spring AOP & Proxy Architecture: JDK Dynamic vs CGLIB (@Transactional Pitfalls)",
+      "category": "Java & Spring Boot",
+      "subcategory": "Spring Boot Internals",
+      "difficulty": "hard",
+      "tags": [
+        "spring",
+        "aop",
+        "proxies",
+        "transactional",
+        "cglib"
+      ],
+      "summary": "Understand why self-invocation breaks @Transactional, JDK interface proxies vs CGLIB subclassing, and propagation levels.",
+      "content": "## Spring AOP & Proxy Architecture\n\n### JDK Dynamic Proxy vs CGLIB\nSpring creates a proxy wrapper around your beans to intercept method invocations for cross-cutting concerns (`@Transactional`, `@Async`, `@Cacheable`, `@Secured`):\n\n- **JDK Dynamic Proxy**: Requires the target class to implement an interface. Generates an implementation of that interface at runtime.\n- **CGLIB Proxy** (Spring Boot Default): Generates a dynamic subclass of your target class at runtime via bytecode manipulation. Cannot proxy `final` classes or `final` methods.\n\n```\nCaller ──► [Proxy Object (Intercepts @Transactional, Begins DB Tx)] \n                │\n                ▼\n           [Real Service Bean (Executes business method)]\n                │\n                ▼\n           [Proxy Object (Commits / Rollbacks on RuntimeException)]\n```\n\n### The Self-Invocation Trap (Why @Transactional Fails Silently)\nIf a method inside `OrderService` calls another transactional method in the same class directly:\n\n```java\n@Service\npublic class OrderService {\n\n    public void processOrder(Order order) {\n        // ❌ SELF-INVOCATION BUG!\n        // Calls this.saveToDatabase() directly without passing through the Spring Proxy!\n        // The @Transactional annotation is completely bypassed!\n        saveToDatabase(order); \n    }\n\n    @Transactional\n    public void saveToDatabase(Order order) {\n        orderRepository.save(order);\n    }\n}\n```\n\n### Solutions to Self-Invocation\n1. **Extract to a separate service bean** (Cleanest architectural fix).\n2. **Inject self via `@Lazy`**:\n   ```java\n   @Autowired @Lazy private OrderService self;\n   self.saveToDatabase(order); // Passes through proxy!\n   ```\n3. **Use TransactionTemplate** for programmatic programmatic transactions.",
+      "references": [
+        {
+          "title": "Baeldung: Spring AOP and Proxies",
+          "url": "https://www.baeldung.com/spring-aop"
+        }
+      ],
+      "interviewTip": "Explain why @Transactional only rolls back by default on unchecked exceptions (RuntimeException and Error), NOT checked exceptions (Exception.class), unless specified via 'rollbackFor = Exception.class'.",
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "spring-sec-001",
+      "title": "Stateless JWT Authentication, Filter Chains & SecurityContext",
+      "category": "Java & Spring Boot",
+      "subcategory": "Spring Security & OAuth2",
+      "difficulty": "hard",
+      "tags": [
+        "spring-security",
+        "jwt",
+        "filter-chain",
+        "securitycontext",
+        "oauth2"
+      ],
+      "summary": "Build stateless REST API authentication using OncePerRequestFilter, SecurityFilterChain, and SecurityContextHolder propagation.",
+      "content": "## Spring Security Architecture & Stateless JWT\n\n### The Security Filter Chain Pipeline\nSpring Security is fundamentally a chain of servlet filters (`SecurityFilterChain`) that inspect requests before they reach your `@RestController`.\n\n```\nHTTP Request \n     │\n     ▼\n[CorsFilter] ──► [CsrfFilter] ──► [JwtAuthenticationFilter (Custom)] ──► [AuthorizationFilter] ──► [DispatcherServlet]\n                                               │\n                                       Extract Bearer Token\n                                       Validate Signature & Claims\n                                       Set SecurityContextHolder\n```\n\n### Custom JWT Authentication Filter Implementation\n```java\n@Component\npublic class JwtAuthenticationFilter extends OncePerRequestFilter {\n\n    private final JwtTokenProvider tokenProvider;\n    private final UserDetailsService userDetailsService;\n\n    @Override\n    protected void doFilterInternal(HttpServletRequest request, \n                                    HttpServletResponse response, \n                                    FilterChain filterChain) throws ServletException, IOException {\n        String token = resolveToken(request);\n        \n        if (token != null && tokenProvider.validateToken(token)) {\n            String username = tokenProvider.extractUsername(token);\n            UserDetails userDetails = userDetailsService.loadUserByUsername(username);\n            \n            UsernamePasswordAuthenticationToken authentication = \n                new UsernamePasswordAuthenticationToken(userDetails, null, userDetails.getAuthorities());\n            authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));\n            \n            // Populate SecurityContext for current thread:\n            SecurityContextHolder.getContext().setAuthentication(authentication);\n        }\n        \n        filterChain.doFilter(request, response);\n    }\n}\n```\n\n### Modern SecurityFilterChain Configuration (Spring Security 6+)\n```java\n@Configuration\n@EnableWebSecurity\npublic class SecurityConfig {\n\n    @Bean\n    public SecurityFilterChain securityFilterChain(HttpSecurity http, JwtAuthenticationFilter jwtFilter) throws Exception {\n        return http\n            .csrf(csrf -> csrf.disable()) // Safe to disable for stateless JWT APIs\n            .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))\n            .authorizeHttpRequests(auth -> auth\n                .requestMatchers(\"/api/auth/**\", \"/actuator/health\").permitAll()\n                .requestMatchers(\"/api/admin/**\").hasRole(\"ADMIN\")\n                .anyRequest().authenticated()\n            )\n            .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class)\n            .build();\n    }\n}\n```",
+      "references": [
+        {
+          "title": "Spring Security Architecture Reference",
+          "url": "https://docs.spring.io/spring-security/reference/servlet/architecture.html"
+        }
+      ],
+      "interviewTip": "Explain why SecurityContextHolder uses ThreadLocal by default and how Async tasks require MODE_INHERITABLETHREADLOCAL or DelegatingSecurityContextAsyncTaskExecutor.",
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    }
+  ]
+}

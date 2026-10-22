@@ -1,0 +1,158 @@
+{
+  "category": "DSA & Algorithms",
+  "icon": "HiCode",
+  "color": "#ef4444",
+  "subcategories": [
+    "Searching & Two Pointers",
+    "Trees & Graphs",
+    "Dynamic Programming"
+  ],
+  "topics": [
+    {
+      "id": "dsa-search-001",
+      "title": "Binary Search on Answer & Search Space Reduction",
+      "category": "DSA & Algorithms",
+      "subcategory": "Searching & Two Pointers",
+      "difficulty": "medium",
+      "tags": [
+        "binary-search",
+        "arrays",
+        "search-space",
+        "optimization"
+      ],
+      "summary": "Master the powerful 'Binary Search on Answer' paradigm for capacity, allocation, and minimum-maximum optimization problems.",
+      "content": "## Binary Search on Answer Space\n\n### The Pattern\nWhenever a problem asks for the **minimum possible maximum** or **maximum possible minimum** with a monotonic condition (if $X$ is valid, any $Y > X$ is also valid), apply Binary Search on the **answer range** $[\\text{min}, \\text{max}]$ rather than searching indices of an array!\n\n### Classic Problem: Koko Eating Bananas (LeetCode 875)\n*Problem*: Koko loves bananas. There are $n$ piles. Find minimum speed $k$ to eat all piles within $h$ hours.\n\n```java\npublic int minEatingSpeed(int[] piles, int h) {\n    int low = 1;\n    int high = Arrays.stream(piles).max().getAsInt();\n    int ans = high;\n\n    while (low <= high) {\n        int mid = low + (high - low) / 2;\n        if (canEatInTime(piles, mid, h)) {\n            ans = mid;         // Mid is viable, try to find an even smaller speed\n            high = mid - 1;\n        } else {\n            low = mid + 1;     // Too slow, increase speed\n        }\n    }\n    return ans;\n}\n\nprivate boolean canEatInTime(int[] piles, int speed, int maxHours) {\n    long hoursSpent = 0;\n    for (int pile : piles) {\n        hoursSpent += (pile + speed - 1) / speed; // Ceiling division without floating point\n    }\n    return hoursSpent <= maxHours;\n}\n```\n\n### Time & Space Complexity\n- **Time**: $O(N \\log(\\max(\\text{piles})))$ where $N$ is array length.\n- **Space**: $O(1)$ constant memory.",
+      "references": [
+        {
+          "title": "LeetCode: 875. Koko Eating Bananas",
+          "url": "https://leetcode.com/problems/koko-eating-bananas/"
+        }
+      ],
+      "interviewTip": "Use '(pile + speed - 1) / speed' for ceiling division of positive integers without casting to float/double (avoids precision issues).",
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "dsa-search-002",
+      "title": "Sliding Window: Longest Substring Without Repeating Characters",
+      "category": "DSA & Algorithms",
+      "subcategory": "Searching & Two Pointers",
+      "difficulty": "medium",
+      "tags": [
+        "sliding-window",
+        "two-pointers",
+        "hashmap",
+        "strings"
+      ],
+      "summary": "Linear O(N) sliding window with character index hashmap and dynamic left pointer adjustment.",
+      "content": "## Sliding Window: Dynamic Window Sizing\n\n### The Algorithm\nMaintain a sliding window $[\\text{left}, \\text{right}]$ where all characters are guaranteed unique. Store the last seen index of each character in an array/map:\n\n```java\npublic int lengthOfLongestSubstring(String s) {\n    int[] lastSeen = new int[128];\n    Arrays.fill(lastSeen, -1);\n    \n    int maxLength = 0;\n    int left = 0;\n    \n    for (int right = 0; right < s.length(); right++) {\n        char c = s.charAt(right);\n        \n        // If character seen inside current window, jump left pointer forward:\n        if (lastSeen[c] >= left) {\n            left = lastSeen[c] + 1;\n        }\n        \n        lastSeen[c] = right;\n        maxLength = Math.max(maxLength, right - left + 1);\n    }\n    \n    return maxLength;\n}\n```\n\n### Complexity\n- **Time**: $O(N)$ — The `right` pointer traverses the string once; the `left` pointer jumps forward without rewinding.\n- **Space**: $O(1)$ fixed 128-byte array for ASCII table.",
+      "references": [
+        {
+          "title": "LeetCode: 3. Longest Substring Without Repeating Characters",
+          "url": "https://leetcode.com/problems/longest-substring-without-repeating-characters/"
+        }
+      ],
+      "interviewTip": "Always clarify character set constraints (ASCII 128 vs extended ASCII 256 vs Unicode). Using an int[128] array is 10x faster than HashMap<Character, Integer> due to zero object boxing.",
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "dsa-graph-001",
+      "title": "Topological Sort & Cycle Detection in Directed Graphs",
+      "category": "DSA & Algorithms",
+      "subcategory": "Trees & Graphs",
+      "difficulty": "hard",
+      "tags": [
+        "graphs",
+        "topological-sort",
+        "kahns-algorithm",
+        "cycle-detection",
+        "dag"
+      ],
+      "summary": "Implement topological sorting for dependency resolution (Course Schedule, build systems) using Kahn's BFS and DFS coloring.",
+      "content": "## Topological Sort & Dependency Resolution\n\n### What is a DAG?\nA **Directed Acyclic Graph (DAG)** represents dependencies with no circular loops. Topological sorting orders vertices such that for every directed edge $u \\to v$, vertex $u$ comes before $v$.\n\n### Kahn's Algorithm (BFS with In-Degree Array)\n\n```java\npublic int[] findOrder(int numCourses, int[][] prerequisites) {\n    List<List<Integer>> adj = new ArrayList<>();\n    for (int i = 0; i < numCourses; i++) adj.add(new ArrayList<>());\n    int[] inDegree = new int[numCourses];\n\n    // 1. Build adjacency list and compute in-degrees\n    for (int[] pre : prerequisites) {\n        adj.get(pre[1]).add(pre[0]);\n        inDegree[pre[0]]++;\n    }\n\n    // 2. Add all nodes with 0 in-degree (no prerequisites) to queue\n    Queue<Integer> queue = new LinkedList<>();\n    for (int i = 0; i < numCourses; i++) {\n        if (inDegree[i] == 0) queue.offer(i);\n    }\n\n    int[] order = new int[numCourses];\n    int index = 0;\n\n    // 3. Process nodes and decrement neighbor in-degrees\n    while (!queue.isEmpty()) {\n        int curr = queue.poll();\n        order[index++] = curr;\n\n        for (int neighbor : adj.get(curr)) {\n            inDegree[neighbor]--;\n            if (inDegree[neighbor] == 0) {\n                queue.offer(neighbor);\n            }\n        }\n    }\n\n    // If cycle detected, not all courses can be finished:\n    return index == numCourses ? order : new int[0];\n}\n```\n\n### Complexity\n- **Time**: $O(V + E)$ visiting every vertex and edge once.\n- **Space**: $O(V + E)$ for adjacency list representation.",
+      "references": [
+        {
+          "title": "LeetCode: 210. Course Schedule II",
+          "url": "https://leetcode.com/problems/course-schedule-ii/"
+        }
+      ],
+      "interviewTip": "Kahn's algorithm detects cycles naturally: If the count of processed nodes is less than total vertices V, the graph contains a cycle.",
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "dsa-graph-002",
+      "title": "Dijkstra's Shortest Path Algorithm with PriorityQueue",
+      "category": "DSA & Algorithms",
+      "subcategory": "Trees & Graphs",
+      "difficulty": "hard",
+      "tags": [
+        "graphs",
+        "dijkstra",
+        "shortest-path",
+        "priority-queue",
+        "greedy"
+      ],
+      "summary": "Find single-source shortest paths in weighted graphs with non-negative edge weights using a min-heap.",
+      "content": "## Dijkstra's Shortest Path Algorithm\n\n### Greedy Choice Property\nAt each step, select the unvisited vertex with the minimum known distance from the source. Non-negative weights guarantee that this distance is final.\n\n```java\npublic int[] dijkstra(int n, List<List<int[]>> adj, int src) {\n    int[] dist = new int[n];\n    Arrays.fill(dist, Integer.MAX_VALUE);\n    dist[src] = 0;\n\n    // Min-heap ordered by distance: int[] {node, distance}\n    PriorityQueue<int[]> pq = new PriorityQueue<>(Comparator.comparingInt(a -> a[1]));\n    pq.offer(new int[]{src, 0});\n\n    while (!pq.isEmpty()) {\n        int[] curr = pq.poll();\n        int u = curr[0];\n        int d = curr[1];\n\n        // Stale entry in heap (shorter path already found):\n        if (d > dist[u]) continue;\n\n        for (int[] edge : adj.get(u)) {\n            int v = edge[0];\n            int weight = edge[1];\n\n            if (dist[u] + weight < dist[v]) {\n                dist[v] = dist[u] + weight;\n                pq.offer(new int[]{v, dist[v]});\n            }\n        }\n    }\n    return dist;\n}\n```\n\n### Complexity\n- **Time**: $O((V + E) \\log V)$ using a binary min-heap.\n- **Space**: $O(V + E)$ for graph representation and distance array.",
+      "references": [
+        {
+          "title": "Dijkstra's Algorithm Overview",
+          "url": "https://en.wikipedia.org/wiki/Dijkstra%27s_algorithm"
+        }
+      ],
+      "interviewTip": "Explain why Dijkstra fails with negative edge weights (greedy assumption broken) and when to switch to Bellman-Ford (O(VE)).",
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "dsa-dp-001",
+      "title": "0/1 Knapsack & Subset Sum Space Optimization",
+      "category": "DSA & Algorithms",
+      "subcategory": "Dynamic Programming",
+      "difficulty": "hard",
+      "tags": [
+        "dynamic-programming",
+        "knapsack",
+        "space-optimization",
+        "tabulation"
+      ],
+      "summary": "Master the 0/1 Knapsack pattern: Recursion with memoization, 2D matrix tabulation, and 1D rolling array space optimization.",
+      "content": "## 0/1 Knapsack & Space Optimization\n\n### The Recurrence Relation\nFor item $i$ with weight $w[i]$ and value $v[i]$ at remaining capacity $C$:\n\n$$\\text{dp}[i][C] = \\max(\\text{dp}[i-1][C],\\; v[i] + \\text{dp}[i-1][C - w[i]])$$\n\n### Optimal 1D Space Solution ($O(C)$ memory)\nNotice that row $i$ only reads from the previous row $i-1$. By iterating capacity in **reverse (from $W$ down to $w[i]$)**, we can compress the 2D table into a single 1D array without overwriting values needed in the current step!\n\n```java\npublic int knapsack(int W, int[] wt, int[] val, int n) {\n    int[] dp = new int[W + 1];\n\n    for (int i = 0; i < n; i++) {\n        // Iterate backwards to prevent using the same item multiple times:\n        for (int c = W; c >= wt[i]; c--) {\n            dp[c] = Math.max(dp[c], val[i] + dp[c - wt[i]]);\n        }\n    }\n    return dp[W];\n}\n```\n\n> **Unbounded Knapsack vs 0/1 Knapsack:**\n> - **0/1 Knapsack** (items used at most once): Loop capacity **backwards** ($W \\to wt[i]$).\n> - **Unbounded Knapsack** (items can be reused infinitely, e.g. Coin Change): Loop capacity **forwards** ($wt[i] \\to W$).",
+      "references": [
+        {
+          "title": "GeeksforGeeks: 0/1 Knapsack Problem",
+          "url": "https://www.geeksforgeeks.org/0-1-knapsack-problem-dp-10/"
+        }
+      ],
+      "interviewTip": "Explain clearly why iterating backwards allows 1D space optimization: Forward iteration would compute results using values from the *current* row instead of the *previous* row.",
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "dsa-dp-002",
+      "title": "Longest Common Subsequence (LCS) & String DP",
+      "category": "DSA & Algorithms",
+      "subcategory": "Dynamic Programming",
+      "difficulty": "medium",
+      "tags": [
+        "dynamic-programming",
+        "lcs",
+        "strings",
+        "edit-distance"
+      ],
+      "summary": "Understand 2D string dynamic programming recurrence relations for LCS, Edit Distance, and sequence diffing.",
+      "content": "## Longest Common Subsequence (LCS)\n\n### Recurrence Relation\nGiven strings $S_1$ of length $m$ and $S_2$ of length $n$:\n- If $S_1[i-1] == S_2[j-1]$: Characters match, $\\text{dp}[i][j] = 1 + \\text{dp}[i-1][j-1]$.\n- If characters do not match: $\\text{dp}[i][j] = \\max(\\text{dp}[i-1][j],\\; \\text{dp}[i][j-1])$.\n\n```java\npublic int longestCommonSubsequence(String text1, String text2) {\n    int m = text1.length();\n    int n = text2.length();\n    int[][] dp = new int[m + 1][n + 1];\n\n    for (int i = 1; i <= m; i++) {\n        for (int j = 1; j <= n; j++) {\n            if (text1.charAt(i - 1) == text2.charAt(j - 1)) {\n                dp[i][j] = 1 + dp[i - 1][j - 1];\n            } else {\n                dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);\n            }\n        }\n    }\n    return dp[m][n];\n}\n```\n\n### Applications of LCS\n- **Git Diff Algorithm**: Myers diff algorithm uses LCS to identify line additions and deletions.\n- **Edit Distance (Levenshtein)**: Extends LCS by adding substitution cost ($1 + \\text{dp}[i-1][j-1]$).",
+      "references": [
+        {
+          "title": "LeetCode: 1143. Longest Common Subsequence",
+          "url": "https://leetcode.com/problems/longest-common-subsequence/"
+        }
+      ],
+      "interviewTip": "Show how LCS can be space-optimized to O(min(m, n)) space using two rolling rows (prev and curr).",
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    }
+  ]
+}

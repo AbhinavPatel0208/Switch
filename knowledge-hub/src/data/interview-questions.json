@@ -1,0 +1,542 @@
+{
+  "category": "Interview Questions",
+  "icon": "HiAcademicCap",
+  "color": "#ec4899",
+  "subcategories": [
+    "High Level Design",
+    "Low Level Design",
+    "Technical Deep Dives",
+    "Behavioral & Leadership",
+    "Java & Spring Q&A",
+    "System Design Case Studies",
+    "Core OOP & Design Principles",
+    "Staff / Senior Behavioral Scenarios"
+  ],
+  "topics": [
+    {
+      "id": "iq-hld-001",
+      "title": "Design a High-Throughput URL Shortener (TinyURL / Bitly)",
+      "category": "Interview Questions",
+      "subcategory": "System Design Case Studies",
+      "difficulty": "medium",
+      "tags": [
+        "system-design",
+        "hld",
+        "url-shortener",
+        "base62",
+        "redis"
+      ],
+      "summary": "End-to-end architecture: 100M writes/day, 10:1 read ratio, Base62 encoding, Snowflake ID generator, and Redis caching.",
+      "content": "## Design a Distributed URL Shortener (TinyURL / Bitly)\n\n### 1. Requirements\n- **Functional**: Shorten long URL to 7-character alias. Redirect short URL to original destination. Custom aliases. Analytics.\n- **Non-Functional**: 100M writes/day (~1,200 writes/sec peak ~3,000/sec). 10:1 read-to-write ratio (12,000 reads/sec). Latency < 20ms on redirect. 99.99% availability.\n\n### 2. URL Encoding: Why Base62?\nCharacter set: `[a-z, A-Z, 0-9]` = 62 characters.\n- 6 characters: $62^6 \\approx 56.8\\text{ Billion}$ unique URLs.\n- 7 characters: $62^7 \\approx 3.5\\text{ Trillion}$ unique URLs (more than enough for decades).\n\n```\nUnique 64-bit ID (from Twitter Snowflake ID Generator)\n                │\n                ▼\n   Base62 Encoder Function\n                │\n                ▼\n        https://tiny.url/7xZ9aQ\n```\n\n### 3. Architecture Topology\n\n```\nUser Request ──► Cloudflare DNS / Anycast\n                        │\n                        ▼\n          AWS ALB (Application Load Balancer)\n                        │\n         ┌──────────────┴──────────────┐\n         ▼                             ▼\n    Web Node 1                    Web Node 2\n         │                             │\n         ├──────────────┬──────────────┤\n         ▼                             ▼\n   Redis Cluster (80/20 rule)    PostgreSQL Cluster (Primary + 2 Read Replicas)\n  (Caches hot URLs, 90% hits!)   (Stores mapping, indexed on short_key)\n```\n\n### 4. Database Schema\n```sql\nCREATE TABLE url_mappings (\n    id          BIGINT PRIMARY KEY, -- Snowflake ID\n    short_key   VARCHAR(7) UNIQUE NOT NULL,\n    long_url    TEXT NOT NULL,\n    user_id     BIGINT,\n    created_at  TIMESTAMPTZ DEFAULT NOW(),\n    expires_at  TIMESTAMPTZ\n);\nCREATE INDEX idx_short_key ON url_mappings(short_key);\n```\n\n### 5. Senior Discussion: HTTP 301 vs 302 Redirect\n- **301 Moved Permanently**: Browser caches the redirect locally. Subsequent clicks bypass your servers completely (Fastest, but breaks analytics tracking!).\n- **302 Found (Temporary Redirect)**: Every request hits your load balancer first (Allows 100% accurate click analytics and geo-tracking).",
+      "references": [
+        {
+          "title": "System Design Primer: URL Shortener",
+          "url": "https://github.com/donnemartin/system-design-primer"
+        }
+      ],
+      "interviewTip": "Start with capacity estimation, explicitly explain the 301 vs 302 analytics trade-off, and describe why hashing MD5 leads to hash collisions while Snowflake ID + Base62 has zero collisions.",
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "iq-hld-002",
+      "title": "Design a Real-Time Distributed Notification Engine",
+      "category": "Interview Questions",
+      "subcategory": "System Design Case Studies",
+      "difficulty": "hard",
+      "tags": [
+        "system-design",
+        "hld",
+        "notifications",
+        "kafka",
+        "priority-queue",
+        "websockets"
+      ],
+      "summary": "High-scale multi-channel notification platform handling millions of Push, SMS, and Email messages with deduplication and priority queues.",
+      "content": "## Design a Multi-Channel Notification Platform\n\n### 1. Requirements\n- **Functional**: Deliver notifications across channels (Push via APNs/FCM, SMS via Twilio, Email via SES, In-App via WebSockets). User channel preferences & opt-outs. Rate limiting (e.g., max 3 promotional notifications/day).\n- **Non-Functional**: Scale to 500 Million notifications/day. Critical alerts (2FA OTP) delivered in < 2 seconds. Promotional alerts delivered within hours. Deduplication.\n\n### 2. Architecture Diagram\n\n```\nClient Services (Order, Auth, Marketing)\n           │\n           ▼\n[Notification Ingestion Gateway]\n           │\n           ├── Validate schema & check User Preference Service (Opt-outs)\n           ├── Deduplication check via Redis (Idempotency Key)\n           ▼\n[Kafka Priority Topics]\n  ├── Topic: alerts.high-priority (2FA OTP, Fraud warnings) ──► Fast Pool Workers\n  ├── Topic: alerts.medium-priority (Order status updates)   ──► Standard Workers\n  └── Topic: alerts.low-priority (Marketing campaigns)      ──► Bulk Workers\n           │\n           ▼\n[Channel Delivery Workers (Retry with Exponential Backoff)]\n  ├── Push Worker  ──► Apple APNs / Google FCM\n  ├── SMS Worker   ──► Twilio / AWS SNS\n  ├── Email Worker ──► AWS SES / SendGrid\n  └── WebSocket Hub ──► Connected Browser Sessions\n```\n\n### 3. Key Reliability Mechanisms\n1. **Deduplication**: When order service retries, generate idempotency key: `hash(userId + eventType + entityId)`. Store in Redis with 1-hour TTL.\n2. **Third-Party Provider Outages**: If Twilio returns 500 or rate limits, worker throws exception triggering Resilience4j retry with exponential jitter and fallback to secondary SMS provider (e.g. Sinch).\n3. **Dead-Letter Queue (DLQ)**: After 5 failed attempts, route payload to Kafka DLQ for manual inspection and alert PagerDuty.",
+      "references": [
+        {
+          "title": "Uber Engineering: Building a Resilient Push Notification System",
+          "url": "https://www.uber.com/blog/building-a-resilient-push-notification-system/"
+        }
+      ],
+      "interviewTip": "Always split notifications into prioritized Kafka topics (High, Medium, Low) so bulk marketing campaigns never delay urgent 2FA verification codes.",
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "iq-oop-001",
+      "title": "SOLID Principles in Enterprise Java & Spring Boot",
+      "category": "Interview Questions",
+      "subcategory": "Core OOP & Design Principles",
+      "difficulty": "medium",
+      "tags": [
+        "solid",
+        "design-patterns",
+        "clean-code",
+        "spring-boot",
+        "architecture"
+      ],
+      "summary": "Practical real-world enterprise explanations of Single Responsibility, Open/Closed, Liskov, Interface Segregation, and Dependency Inversion.",
+      "content": "## SOLID Principles with Spring Boot Architectural Context\n\n### S — Single Responsibility Principle (SRP)\n*Rule*: A class should have only one reason to change.\n- **Violation**: An `OrderService` that validates payment, executes SQL queries, formats HTML receipts, and sends emails.\n- **Spring Architecture**: Deconstruct into `@Service OrderService`, `PaymentGatewayClient`, `InvoicePdfGenerator`, and `EmailNotificationService`.\n\n### O — Open/Closed Principle (OCP)\n*Rule*: Open for extension, closed for modification.\n\n```java\n// Define abstraction:\npublic interface PaymentProcessor {\n    boolean supports(PaymentType type);\n    PaymentResult process(PaymentRequest request);\n}\n\n// Spring automatically injects all implementations into a List!\n@Service\npublic class PaymentDispatcherService {\n    private final List<PaymentProcessor> processors;\n\n    public PaymentDispatcherService(List<PaymentProcessor> processors) {\n        this.processors = processors;\n    }\n\n    public PaymentResult pay(PaymentRequest req) {\n        return processors.stream()\n            .filter(p -> p.supports(req.getType()))\n            .findFirst()\n            .orElseThrow()\n            .process(req);\n    }\n}\n// Adding ApplePay or Crypto requires ZERO changes to PaymentDispatcherService!\n```\n\n### L — Liskov Substitution Principle (LSP)\n*Rule*: Subtypes must be substitutable for their base types without altering program correctness.\n- Classic violation: `Square extends Rectangle`. Setting width changes height unexpectedly, breaking client expectations.\n\n### I — Interface Segregation Principle (ISP)\n*Rule*: Clients should not be forced to depend on methods they do not use. Split fat interfaces into fine-grained role interfaces.\n\n### D — Dependency Inversion Principle (DIP)\n*Rule*: High-level modules should not depend on low-level modules; both should depend on abstractions.\n- Spring Boot's entire **IoC / Dependency Injection** container is a physical embodiment of DIP: `@Autowired private NotificationService notificationService;` depends on an interface, not `SmsNotificationServiceImpl`.",
+      "references": [
+        {
+          "title": "Robert C. Martin: Clean Architecture",
+          "url": "https://blog.cleancoder.com/"
+        }
+      ],
+      "interviewTip": "Illustrate Open/Closed Principle using Spring's automatic List<Processor> injection pattern. Interviewers love seeing practical frameworks applied to theoretical concepts.",
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "iq-beh-001",
+      "title": "Staff SWE Behavioral: Diagnosing P99 Latency Regressions (STAR Method)",
+      "category": "Interview Questions",
+      "subcategory": "Staff / Senior Behavioral Scenarios",
+      "difficulty": "hard",
+      "tags": [
+        "behavioral",
+        "star-method",
+        "p99-latency",
+        "incident-management",
+        "leadership"
+      ],
+      "summary": "How to articulate complex production crisis diagnosis, root-cause analysis, and cross-team leadership using the STAR framework.",
+      "content": "## Senior / Staff Behavioral: Diagnosing a P99 Latency Crisis\n\n### The STAR Framework\n- **Situation**: Context, scale, and business stakes.\n- **Task**: Your specific personal responsibility (not just \"we\").\n- **Action**: Concrete technical and leadership steps you took.\n- **Result**: Quantifiable business impact and preventive guardrails.\n\n---\n\n### Production Case Study Response\n\n#### Situation\n*\"During a major promotional flash sale, our Core Checkout API experienced severe latency degradation: while median (P50) response times remained under 45ms, our 99th percentile (P99) spiked from 120ms to 4.2 seconds, resulting in dropped cart checkouts and critical business alerts.\"*\n\n#### Task\n*\"As the Backend Tech Lead, my responsibility was to stabilize customer checkouts immediately, identify the root cause without guessing, and implement permanent structural guardrails.\"*\n\n#### Action\n1. **Triaging with Distributed Tracing (OpenTelemetry / Jaeger)**:\n   - Isolated the slowest 1% traces. Observed that application code was fast, but threads were getting blocked waiting for database connections.\n2. **Metrics & HikariCP Analysis**:\n   - Inspected Grafana metrics for HikariCP connection pool: `HikariCP.ActiveConnections` was pegged at 100% capacity with `ConnectionTimeoutExceptions`.\n3. **Database Locks & Slow Query Logs**:\n   - Executed `SELECT * FROM pg_stat_activity WHERE wait_event_type = 'Lock'` in PostgreSQL.\n   - Discovered that an unindexed audit logging update inside an open `@Transactional` method was acquiring row-level locks on the user profile table, stalling subsequent payment transactions from getting a connection.\n4. **Immediate Remediation**:\n   - Reduced transaction scope: moved the non-critical audit log writes outside the core checkout transaction to execute asynchronously via Kafka.\n   - Tuned HikariCP pool sizing and added connection timeout alarms.\n\n#### Result\n*\"P99 latency dropped from 4.2 seconds to 85ms (a 98% reduction). Checkout throughput recovered to 100% with zero dropped orders. I authored a postmortem and instituted a linting rule and PR checklist preventing blocking network calls inside @Transactional boundaries across the engineering team.\"*",
+      "references": [
+        {
+          "title": "Google SRE Book: Managing Incidents",
+          "url": "https://sre.google/sre-book/incident-management/"
+        }
+      ],
+      "interviewTip": "Always emphasize metrics, distributed tracing, and root cause prevention. Senior interviewers want to see that you measure before optimizing.",
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "iq-hld-003",
+      "title": "Design Instagram / Photo Sharing System",
+      "category": "Interview Questions",
+      "subcategory": "High Level Design",
+      "difficulty": "hard",
+      "tags": [
+        "system-design",
+        "hld",
+        "instagram",
+        "cdn",
+        "feed-generation",
+        "elasticsearch",
+        "neo4j"
+      ],
+      "summary": "Photo upload via S3 + CDN, fan-out feed generation, counter sharding for likes, Elasticsearch for search, and graph DB for follower relationships.",
+      "content": "## Design Instagram / Photo Sharing System\n\n### 1. Requirements\n**Functional**: Upload photos/videos. Follow/unfollow users. View home feed (posts from followees). Like and comment on posts. Search users and hashtags.\n**Non-Functional**: 500M DAU. 100M photos uploaded per day. Feed load < 200ms. 99.99% availability. Photos stored for lifetime.\n\n### 2. Capacity Estimation\n```\nPhoto uploads : 100M/day  = ~1,157/sec\nAvg photo size : 2MB compressed\nStorage/day   : 100M × 2MB = 200 TB/day\nStorage/year  : ~73 PB (use tiered S3 storage)\nFeed reads    : 500M users × 5 reads/day = 2,500M/day = ~29,000 reads/sec\n```\n\n### 3. Architecture Diagram\n```\n[Client App]\n     │\n     ▼\n[API Gateway / CDN Edge (CloudFront)]\n     │\n     ├─── Photo Upload ──► [Upload Service]\n     │                          │\n     │                    S3 Multipart Upload\n     │                          │\n     │                    [CDN Invalidation + Thumbnail Service]\n     │                          │\n     │                    [Kafka: photo.uploaded]\n     │                          │\n     │              ┌───────────┴───────────┐\n     │              ▼                       ▼\n     │        [Feed Fan-out Service]   [Search Indexer]\n     │              │                       │\n     │        Redis Sorted Sets       Elasticsearch\n     │        (per-user feed cache)   (hashtag + user search)\n     │\n     ├─── Read Feed ──► [Feed Service]\n     │                       │\n     │                 Redis feed cache (ZREVRANGE)\n     │                 Miss → DB query → re-populate\n     │\n     └─── Likes/Comments ──► [Interaction Service]\n                                    │\n                             Counter Sharding\n                             (Redis HyperLogLog for uniques)\n```\n\n### 4. Feed Generation: Push vs Pull vs Hybrid\n| Approach | How | Pros | Cons |\n|----------|-----|------|------|\n| **Push (fan-out on write)** | On post, push to all followers' feed caches | Fast reads | Celebrities with 10M followers → massive write amplification |\n| **Pull (fan-out on read)** | Merge followee posts at read time | Simple writes | Slow reads, DB heavy |\n| **Hybrid** | Push for normal users (<5K followers), pull for celebrities | Best of both | Complexity |\n\nInstagram uses **hybrid**: regular users get push fan-out into Redis sorted sets; celebrity posts are pulled and merged at read time.\n\n### 5. Likes: Counter Sharding\nNaive approach: `UPDATE posts SET like_count = like_count + 1` causes write hotspot.\nSolution: **Shard counters** — 10 counter shards per post, each in Redis. Read = sum all shards. Write = increment random shard. Reduces contention by 10x.\n\n### 6. Follower Graph: Neo4j vs Adjacency List\n- **Adjacency list (RDBMS)**: `follows(follower_id, followee_id)` — simple queries, but multi-hop traversals (friend-of-friend) require expensive self-joins.\n- **Neo4j (Graph DB)**: `MATCH (u:User)-[:FOLLOWS*2]->(fof)` — native graph traversal, ideal for \"people you may know\" features.\n- **Production reality**: Instagram uses a custom in-memory graph store. For most interviews, a PostgreSQL adjacency list with materialized feed cache is the right answer.\n\n### 7. Search: Elasticsearch\n- Index documents: `{ user_id, username, bio, hashtags[] }`.\n- Use **inverted index** for full-text search on bios and hashtags.\n- Use **completion suggester** for real-time autocomplete.\n- Sync from primary DB via Kafka CDC (Change Data Capture) using Debezium.",
+      "interviewTip": "Interviewers test whether you know the fan-out write amplification problem for celebrity accounts. Always propose the hybrid approach and explain the Redis sorted set structure (score = timestamp) for the feed cache.",
+      "references": [
+        {
+          "title": "Instagram Engineering Blog",
+          "url": "https://instagram-engineering.com/"
+        },
+        {
+          "title": "System Design Primer",
+          "url": "https://github.com/donnemartin/system-design-primer"
+        }
+      ],
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "iq-hld-004",
+      "title": "Design a Rate Limiter Service",
+      "category": "Interview Questions",
+      "subcategory": "High Level Design",
+      "difficulty": "medium",
+      "tags": [
+        "system-design",
+        "hld",
+        "rate-limiter",
+        "redis",
+        "token-bucket",
+        "sliding-window"
+      ],
+      "summary": "Token bucket, leaky bucket, sliding window algorithms, Redis atomic Lua script implementation, and X-RateLimit-* response headers.",
+      "content": "## Design a Rate Limiter Service\n\n### 1. Why Rate Limiting?\n- Prevent API abuse and DDoS attacks.\n- Ensure fair resource allocation among tenants.\n- Protect downstream services from overload.\n\n### 2. Algorithm Comparison\n\n| Algorithm | How It Works | Pros | Cons |\n|-----------|-------------|------|------|\n| **Token Bucket** | Bucket holds N tokens. Refilled at R tokens/sec. Request consumes 1 token. | Allows burst traffic up to bucket size | Slightly complex implementation |\n| **Leaky Bucket** | Requests queue in a fixed-size queue, processed at constant rate | Smooth output, prevents bursts | Queue adds latency; bursts dropped |\n| **Fixed Window Counter** | Count requests per fixed time window (e.g., 1 min) | Simple | Boundary burst: 2x limit possible at window edge |\n| **Sliding Window Log** | Log timestamp of every request. Count logs in last window | Accurate | High memory — log per request |\n| **Sliding Window Counter** | Hybrid: weight previous window count proportionally | Memory efficient + accurate | Approximate (usually acceptable) |\n\n**Winner for most interviews**: Sliding Window Counter in Redis.\n\n### 3. Redis Implementation: Sliding Window Counter\n```lua\n-- Atomic Lua script (runs as single Redis transaction)\nlocal key = KEYS[1]         -- e.g. \"rate:user:12345:GET:/api/orders\"\nlocal now = tonumber(ARGV[1])  -- current timestamp in ms\nlocal window = tonumber(ARGV[2]) -- window size in ms (e.g. 60000)\nlocal limit = tonumber(ARGV[3])  -- max requests\nlocal weight = tonumber(ARGV[4]) -- previous window weight (e.g. 0.7)\n\nlocal prev_key = key .. \":prev\"\nlocal prev_count = tonumber(redis.call('GET', prev_key) or 0)\nlocal curr_count = tonumber(redis.call('GET', key) or 0)\n\n-- Weighted estimate of requests in sliding window\nlocal elapsed_fraction = (now % window) / window\nlocal estimated = math.floor(prev_count * (1 - elapsed_fraction) + curr_count)\n\nif estimated >= limit then\n    return 0  -- REJECT\nend\n\n-- Increment current window counter\nredis.call('INCR', key)\nredis.call('PEXPIRE', key, window * 2)\nreturn 1  -- ALLOW\n```\n\n### 4. Architecture\n```\n[Client Request]\n       │\n       ▼\n[API Gateway / Rate Limiter Middleware]\n       │\n       ├── Extract identity key: user_id OR api_key OR IP\n       ├── Call Redis Cluster (Lua script — atomic)\n       │\n       ├── ALLOW ──► Forward to upstream service\n       │\n       └── REJECT ──► HTTP 429 Too Many Requests\n                      Headers:\n                        X-RateLimit-Limit: 100\n                        X-RateLimit-Remaining: 0\n                        X-RateLimit-Reset: 1698765432\n                        Retry-After: 30\n```\n\n### 5. Distributed Rate Limiter Challenges\n- **Race condition**: Two app servers both read count=99, both allow, actual count becomes 101. **Fix**: Lua script makes read+increment atomic.\n- **Redis node failure**: Use Redis Cluster with 3 masters. Alternatively, use **Resilience4j RateLimiter** as a local fallback.\n- **Per-user vs Global**: Use different key namespaces: `rate:user:{id}:{endpoint}` for per-user, `rate:global:{endpoint}` for global.\n\n### 6. Rate Limit Headers (RFC 6585)\n```\nHTTP/1.1 429 Too Many Requests\nX-RateLimit-Limit: 100\nX-RateLimit-Remaining: 0\nX-RateLimit-Reset: 1698765432  (Unix timestamp when window resets)\nRetry-After: 30               (seconds to wait)\nContent-Type: application/json\n\n{ \"error\": \"Rate limit exceeded\", \"retryAfter\": 30 }\n```",
+      "interviewTip": "Interviewers check if you know the edge-case of fixed window counters (2x burst at boundary). Always demonstrate the Lua script for atomicity. Mention per-user, per-endpoint, and global limit tiers.",
+      "references": [
+        {
+          "title": "Stripe: Scaling Your API with Rate Limiters",
+          "url": "https://stripe.com/blog/rate-limiters"
+        },
+        {
+          "title": "Redis Documentation: INCR command",
+          "url": "https://redis.io/commands/incr/"
+        }
+      ],
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "iq-lld-001",
+      "title": "Low Level Design: Parking Lot System",
+      "category": "Interview Questions",
+      "subcategory": "Low Level Design",
+      "difficulty": "medium",
+      "tags": [
+        "lld",
+        "design-patterns",
+        "strategy-pattern",
+        "singleton",
+        "java",
+        "oop"
+      ],
+      "summary": "Parking lot class design with spot types, floors, gates, fee calculation using Strategy pattern, and Singleton for the lot instance.",
+      "content": "## Low Level Design: Parking Lot System\n\n### 1. Requirements Clarification\n- Multiple floors, each with spots of different sizes: SMALL (bikes), MEDIUM (cars), LARGE (trucks/buses).\n- Entry and exit gates with ticket issuance and payment processing.\n- Fee calculation based on vehicle type and duration (hourly).\n- Real-time availability tracking.\n- Single entry point to the parking lot system (Singleton).\n\n### 2. Class Diagram (Key Entities)\n```\nParkingLot (Singleton)\n  └── floors: List<Floor>\n\nFloor\n  └── spots: List<ParkingSpot>\n\nParkingSpot\n  ├── spotId, floor, type: SpotType, isOccupied\n  └── vehicle: Vehicle\n\nVehicle (abstract)\n  ├── licensePlate, type: VehicleType\n  ├── Car extends Vehicle\n  ├── Bike extends Vehicle\n  └── Truck extends Vehicle\n\nTicket\n  ├── ticketId, entryTime, vehicle, spot\n  └── exitTime, amountPaid\n\nGate (abstract)\n  ├── EntryGate extends Gate\n  └── ExitGate extends Gate\n\nFeeCalculator (interface — Strategy Pattern)\n  ├── HourlyFeeCalculator implements FeeCalculator\n  └── DayPassFeeCalculator implements FeeCalculator\n```\n\n### 3. Core Java Implementation\n\n```java\n// Enums\npublic enum SpotType { SMALL, MEDIUM, LARGE }\npublic enum VehicleType { BIKE, CAR, TRUCK }\n\n// ParkingSpot\npublic class ParkingSpot {\n    private final String spotId;\n    private final SpotType type;\n    private boolean isOccupied;\n    private Vehicle vehicle;\n\n    public synchronized boolean park(Vehicle v) {\n        if (isOccupied) return false;\n        this.vehicle = v;\n        this.isOccupied = true;\n        return true;\n    }\n\n    public synchronized void vacate() {\n        this.vehicle = null;\n        this.isOccupied = false;\n    }\n}\n\n// Strategy Pattern: Fee Calculator\npublic interface FeeCalculator {\n    double calculate(Ticket ticket);\n}\n\npublic class HourlyFeeCalculator implements FeeCalculator {\n    private static final Map<VehicleType, Double> RATES = Map.of(\n        VehicleType.BIKE,  10.0,\n        VehicleType.CAR,   20.0,\n        VehicleType.TRUCK, 40.0\n    );\n\n    @Override\n    public double calculate(Ticket ticket) {\n        long hours = ChronoUnit.HOURS.between(\n            ticket.getEntryTime(), ticket.getExitTime()) + 1;\n        return hours * RATES.get(ticket.getVehicle().getType());\n    }\n}\n\n// Singleton: ParkingLot\npublic class ParkingLot {\n    private static volatile ParkingLot instance;\n    private final List<Floor> floors;\n    private final FeeCalculator feeCalculator;\n\n    private ParkingLot(List<Floor> floors, FeeCalculator calc) {\n        this.floors = floors;\n        this.feeCalculator = calc;\n    }\n\n    public static ParkingLot getInstance(List<Floor> floors, FeeCalculator calc) {\n        if (instance == null) {\n            synchronized (ParkingLot.class) {\n                if (instance == null) {\n                    instance = new ParkingLot(floors, calc);\n                }\n            }\n        }\n        return instance;\n    }\n\n    public Optional<ParkingSpot> findAvailableSpot(VehicleType type) {\n        SpotType required = mapToSpotType(type);\n        return floors.stream()\n            .flatMap(f -> f.getSpots().stream())\n            .filter(s -> s.getType() == required && !s.isOccupied())\n            .findFirst();\n    }\n\n    private SpotType mapToSpotType(VehicleType type) {\n        return switch (type) {\n            case BIKE  -> SpotType.SMALL;\n            case CAR   -> SpotType.MEDIUM;\n            case TRUCK -> SpotType.LARGE;\n        };\n    }\n}\n\n// EntryGate\npublic class EntryGate {\n    private final ParkingLot lot;\n\n    public Ticket issueTicket(Vehicle vehicle) {\n        Optional<ParkingSpot> spot = lot.findAvailableSpot(vehicle.getType());\n        if (spot.isEmpty()) throw new ParkingFullException(\"No spot available\");\n        spot.get().park(vehicle);\n        return new Ticket(UUID.randomUUID().toString(), LocalDateTime.now(), vehicle, spot.get());\n    }\n}\n```\n\n### 4. Design Patterns Used\n| Pattern | Where | Why |\n|---------|-------|-----|\n| **Singleton** | ParkingLot | One physical lot, one shared state |\n| **Strategy** | FeeCalculator | Swap fee logic without changing Gate |\n| **Template Method** | Gate (Entry/Exit) | Shared gate flow, specific behavior in subclass |",
+      "interviewTip": "Interviewers check that you clarify spot types before coding. Show the Strategy pattern for fee calculation and explain why Singleton uses double-checked locking with volatile for thread safety.",
+      "references": [
+        {
+          "title": "Grokking the Object Oriented Design Interview",
+          "url": "https://www.educative.io/courses/grokking-the-object-oriented-design-interview"
+        }
+      ],
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "iq-lld-002",
+      "title": "Low Level Design: Library Management System",
+      "category": "Interview Questions",
+      "subcategory": "Low Level Design",
+      "difficulty": "medium",
+      "tags": [
+        "lld",
+        "observer-pattern",
+        "java",
+        "oop",
+        "library"
+      ],
+      "summary": "Books, members, borrowing, and reservations with Observer pattern for notifications and fine calculation logic.",
+      "content": "## Low Level Design: Library Management System\n\n### 1. Core Entities\n- **LibraryItem** (abstract): Book, Magazine, DVD.\n- **Member**: Has membership ID, active borrowed items list.\n- **BorrowRecord**: Tracks who borrowed what and when.\n- **Reservation**: Queue of members waiting for an item.\n- **Fine**: Calculated when item returned late.\n\n### 2. Class Hierarchy\n```java\npublic abstract class LibraryItem {\n    private String itemId;\n    private String title;\n    private ItemStatus status; // AVAILABLE, BORROWED, RESERVED\n    private int totalCopies;\n    private int availableCopies;\n\n    public abstract ItemType getType();\n}\n\npublic class Book extends LibraryItem {\n    private String author;\n    private String isbn;\n    private String genre;\n\n    @Override\n    public ItemType getType() { return ItemType.BOOK; }\n}\n\npublic class Member {\n    private String memberId;\n    private String name;\n    private String email;\n    private List<BorrowRecord> activeBorrows; // max 5 at a time\n    private MembershipStatus status;\n}\n```\n\n### 3. Search Strategies (Strategy Pattern)\n```java\npublic interface SearchStrategy {\n    List<LibraryItem> search(String query, List<LibraryItem> catalog);\n}\n\npublic class TitleSearchStrategy implements SearchStrategy {\n    @Override\n    public List<LibraryItem> search(String query, List<LibraryItem> catalog) {\n        return catalog.stream()\n            .filter(item -> item.getTitle().toLowerCase().contains(query.toLowerCase()))\n            .collect(Collectors.toList());\n    }\n}\n\npublic class ISBNSearchStrategy implements SearchStrategy {\n    @Override\n    public List<LibraryItem> search(String query, List<LibraryItem> catalog) {\n        return catalog.stream()\n            .filter(item -> item instanceof Book b && b.getIsbn().equals(query))\n            .collect(Collectors.toList());\n    }\n}\n```\n\n### 4. Observer Pattern: Reservation Notifications\n```java\npublic interface ReservationObserver {\n    void onItemAvailable(LibraryItem item, Member member);\n}\n\npublic class EmailNotificationObserver implements ReservationObserver {\n    @Override\n    public void onItemAvailable(LibraryItem item, Member member) {\n        emailService.send(member.getEmail(),\n            \"Item Available\",\n            \"'\" + item.getTitle() + \"' is now available for pickup.\");\n    }\n}\n\npublic class ReservationQueue {\n    // Key: itemId, Value: ordered queue of observers\n    private Map<String, Queue<ReservationObserver>> reservations = new HashMap<>();\n\n    public void addReservation(String itemId, Member member) {\n        reservations.computeIfAbsent(itemId, k -> new LinkedList<>())\n                    .add(new EmailNotificationObserver(member));\n    }\n\n    public void notifyNext(LibraryItem item) {\n        Queue<ReservationObserver> queue = reservations.get(item.getItemId());\n        if (queue != null && !queue.isEmpty()) {\n            queue.poll().onItemAvailable(item, null); // observer holds member ref\n        }\n    }\n}\n```\n\n### 5. Fine Calculation\n```java\npublic class FineCalculator {\n    private static final double FINE_PER_DAY = 2.0; // $2 per day\n    private static final int LOAN_PERIOD_DAYS = 14;\n\n    public double calculate(BorrowRecord record) {\n        LocalDate dueDate = record.getBorrowDate().plusDays(LOAN_PERIOD_DAYS);\n        LocalDate returnDate = record.getReturnDate();\n        if (!returnDate.isAfter(dueDate)) return 0.0;\n        long overdueDays = ChronoUnit.DAYS.between(dueDate, returnDate);\n        return overdueDays * FINE_PER_DAY;\n    }\n}\n```\n\n### 6. Key Design Decisions\n- Member borrow limit (e.g., 5 items): enforced in `BorrowingService.borrow()`.\n- Concurrent access to `availableCopies`: use `synchronized` or `AtomicInteger`.\n- When a book is returned and has reservations, automatically notify next in queue.",
+      "interviewTip": "Interviewers assess whether you model the reservation queue correctly (FIFO) and use Observer to decouple notification logic. Show the Strategy pattern for search — it signals you think in extensibility.",
+      "references": [
+        {
+          "title": "Grokking the Object Oriented Design Interview",
+          "url": "https://www.educative.io/courses/grokking-the-object-oriented-design-interview"
+        }
+      ],
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "iq-lld-003",
+      "title": "Low Level Design: Food Delivery System (Zomato / Swiggy)",
+      "category": "Interview Questions",
+      "subcategory": "Low Level Design",
+      "difficulty": "hard",
+      "tags": [
+        "lld",
+        "state-machine",
+        "observer-pattern",
+        "strategy-pattern",
+        "java",
+        "food-delivery"
+      ],
+      "summary": "Order lifecycle FSM, price calculation with surge, real-time tracking via Strategy pattern, and Observer for status notifications.",
+      "content": "## Low Level Design: Food Delivery System\n\n### 1. Core Entities\n```\nCustomer ─── places ──► Order ─── contains ──► OrderItems\n                          │\n                    assigned to\n                          │\n                     DeliveryAgent\n                          │\n                    picks up from\n                          │\n                      Restaurant ─── has ──► Menu ─── has ──► MenuItem\n```\n\n### 2. Order Lifecycle: Finite State Machine\n```\n[PLACED]\n   │  Restaurant accepts\n   ▼\n[CONFIRMED]\n   │  Kitchen starts preparing\n   ▼\n[PREPARING]\n   │  Food ready, agent assigned\n   ▼\n[READY_FOR_PICKUP]\n   │  Agent picks up\n   ▼\n[OUT_FOR_DELIVERY]\n   │  Agent delivers\n   ▼\n[DELIVERED]\n\n(From any state: CANCELLED)\n```\n\n```java\npublic enum OrderStatus {\n    PLACED, CONFIRMED, PREPARING, READY_FOR_PICKUP, OUT_FOR_DELIVERY, DELIVERED, CANCELLED\n}\n\npublic class Order {\n    private OrderStatus status;\n\n    public void transition(OrderStatus newStatus) {\n        validateTransition(this.status, newStatus);\n        this.status = newStatus;\n        notifyObservers(newStatus);\n    }\n\n    private void validateTransition(OrderStatus from, OrderStatus to) {\n        Map<OrderStatus, Set<OrderStatus>> allowed = Map.of(\n            OrderStatus.PLACED,            Set.of(CONFIRMED, CANCELLED),\n            OrderStatus.CONFIRMED,         Set.of(PREPARING, CANCELLED),\n            OrderStatus.PREPARING,         Set.of(READY_FOR_PICKUP),\n            OrderStatus.READY_FOR_PICKUP,  Set.of(OUT_FOR_DELIVERY),\n            OrderStatus.OUT_FOR_DELIVERY,  Set.of(DELIVERED)\n        );\n        if (!allowed.getOrDefault(from, Set.of()).contains(to))\n            throw new InvalidStatusTransitionException(from + \" -> \" + to);\n    }\n}\n```\n\n### 3. Price Calculation (Strategy Pattern)\n```java\npublic interface PricingStrategy {\n    double calculate(Order order);\n}\n\npublic class StandardPricingStrategy implements PricingStrategy {\n    @Override\n    public double calculate(Order order) {\n        double itemsTotal = order.getItems().stream()\n            .mapToDouble(i -> i.getMenuItem().getPrice() * i.getQuantity()).sum();\n        double deliveryFee = computeDeliveryFee(order.getDeliveryDistanceKm());\n        double platformFee = 5.0;\n        return itemsTotal + deliveryFee + platformFee;\n    }\n}\n\npublic class SurgePricingStrategy implements PricingStrategy {\n    private final double surgeMultiplier; // e.g. 1.5x during rain/peak\n\n    @Override\n    public double calculate(Order order) {\n        double base = new StandardPricingStrategy().calculate(order);\n        return base * surgeMultiplier;\n    }\n}\n```\n\n### 4. Observer Pattern: Order Status Notifications\n```java\npublic interface OrderObserver {\n    void onStatusChange(Order order, OrderStatus newStatus);\n}\n\npublic class CustomerNotificationObserver implements OrderObserver {\n    @Override\n    public void onStatusChange(Order order, OrderStatus newStatus) {\n        pushNotificationService.send(\n            order.getCustomer().getDeviceToken(),\n            \"Order Update\",\n            \"Your order is now: \" + newStatus.name()\n        );\n    }\n}\n\npublic class RestaurantDashboardObserver implements OrderObserver {\n    @Override\n    public void onStatusChange(Order order, OrderStatus newStatus) {\n        websocketHub.broadcast(order.getRestaurant().getId(), newStatus);\n    }\n}\n```\n\n### 5. Agent Assignment (Strategy)\n```java\npublic interface AgentAssignmentStrategy {\n    Optional<DeliveryAgent> assign(Order order, List<DeliveryAgent> availableAgents);\n}\n\npublic class NearestAgentStrategy implements AgentAssignmentStrategy {\n    @Override\n    public Optional<DeliveryAgent> assign(Order order, List<DeliveryAgent> agents) {\n        return agents.stream()\n            .filter(DeliveryAgent::isAvailable)\n            .min(Comparator.comparingDouble(a ->\n                haversineDistance(a.getCurrentLocation(), order.getRestaurant().getLocation())));\n    }\n}\n```",
+      "interviewTip": "The FSM transition validation is critical — interviewers check if you prevent invalid state jumps (e.g., PLACED -> DELIVERED). Also demonstrate that pricing strategy is injected at runtime based on conditions like rain or peak hours.",
+      "references": [
+        {
+          "title": "Designing Data-Intensive Applications",
+          "url": "https://dataintensive.net/"
+        }
+      ],
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "iq-lld-004",
+      "title": "Low Level Design: Splitwise / Expense Splitting",
+      "category": "Interview Questions",
+      "subcategory": "Low Level Design",
+      "difficulty": "hard",
+      "tags": [
+        "lld",
+        "splitwise",
+        "graph-algorithm",
+        "java",
+        "oop",
+        "expense-splitting"
+      ],
+      "summary": "Equal, exact, percentage, and share-based splits with a graph-based debt simplification algorithm and full Java OOP design.",
+      "content": "## Low Level Design: Splitwise / Expense Splitting\n\n### 1. Split Types\n| Type | Description | Example |\n|------|-------------|------|\n| **Equal** | Divide equally among participants | $120 for 4 people = $30 each |\n| **Exact** | Each person owes a specific amount | Alice $50, Bob $70 |\n| **Percentage** | Each person owes a percentage | Alice 60%, Bob 40% |\n| **Shares** | Weighted ratio | Alice 2 shares, Bob 3 shares of $100 → $40/$60 |\n\n### 2. Core Classes\n```java\npublic class User {\n    private String userId;\n    private String name;\n    private String email;\n}\n\npublic abstract class Split {\n    protected User user;\n    protected double amount; // computed from expense\n    public abstract void validateAndCompute(double totalAmount, int participantCount);\n}\n\npublic class EqualSplit extends Split {\n    @Override\n    public void validateAndCompute(double total, int count) {\n        this.amount = total / count;\n    }\n}\n\npublic class PercentageSplit extends Split {\n    private double percent;\n    @Override\n    public void validateAndCompute(double total, int count) {\n        this.amount = total * percent / 100.0;\n    }\n}\n\npublic class Expense {\n    private String expenseId;\n    private String description;\n    private double totalAmount;\n    private User paidBy;\n    private List<Split> splits;\n    private Group group; // optional\n    private LocalDateTime createdAt;\n}\n\npublic class Group {\n    private String groupId;\n    private String name;\n    private List<User> members;\n    private List<Expense> expenses;\n}\n\n// Balance: net amount owed between two users (positive = A owes B)\npublic class Balance {\n    private User creditor;\n    private User debtor;\n    private double amount;\n    private Currency currency;\n}\n```\n\n### 3. Simplify Debts Algorithm\nNaive: 5 people → up to 10 pairwise debts. Simplified: minimum transactions.\n\n**Algorithm (Greedy, O(n log n))**:\n1. Compute net balance for each user: `net[i] = total received - total owed`.\n2. Split into creditors (net > 0) and debtors (net < 0).\n3. Use two max-heaps. Greedily match largest creditor with largest debtor.\n\n```java\npublic List<Settlement> simplifyDebts(List<Balance> balances) {\n    Map<String, Double> net = new HashMap<>();\n    for (Balance b : balances) {\n        net.merge(b.getCreditor().getUserId(), b.getAmount(), Double::sum);\n        net.merge(b.getDebtor().getUserId(), -b.getAmount(), Double::sum);\n    }\n\n    PriorityQueue<double[]> creditors = new PriorityQueue<>((a, b) -> Double.compare(b[0], a[0]));\n    PriorityQueue<double[]> debtors   = new PriorityQueue<>((a, b) -> Double.compare(a[0], b[0]));\n\n    for (Map.Entry<String, Double> e : net.entrySet()) {\n        if (e.getValue() > 0) creditors.add(new double[]{e.getValue(), idToIndex(e.getKey())});\n        if (e.getValue() < 0) debtors.add(new double[]{e.getValue(), idToIndex(e.getKey())});\n    }\n\n    List<Settlement> result = new ArrayList<>();\n    while (!creditors.isEmpty() && !debtors.isEmpty()) {\n        double[] creditor = creditors.poll();\n        double[] debtor   = debtors.poll();\n        double settled = Math.min(creditor[0], -debtor[0]);\n        result.add(new Settlement(indexToUser(debtor[1]), indexToUser(creditor[1]), settled));\n        if (creditor[0] - settled > 0.001) creditors.add(new double[]{creditor[0] - settled, creditor[1]});\n        if (-debtor[0] - settled > 0.001) debtors.add(new double[]{debtor[0] + settled, debtor[1]});\n    }\n    return result;\n}\n```\n\n### 4. Validation Rules\n- **EqualSplit**: auto-computed, no validation needed.\n- **ExactSplit**: `sum(amounts) must == totalAmount`.\n- **PercentageSplit**: `sum(percentages) must == 100.0` (within floating point tolerance).\n- **SharesSplit**: compute ratio: `amount_i = (shares_i / total_shares) * totalAmount`.",
+      "interviewTip": "Interviewers specifically test the debt simplification algorithm. Know that it is a graph problem: net flow per node. The greedy two-heap approach minimizes the number of transactions. Also mention floating-point precision handling.",
+      "references": [
+        {
+          "title": "Splitwise Engineering Blog",
+          "url": "https://blog.splitwise.com/"
+        }
+      ],
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "iq-tech-001",
+      "title": "Java 8+ Stream Interview Puzzles (Top 10)",
+      "category": "Interview Questions",
+      "subcategory": "Technical Deep Dives",
+      "difficulty": "medium",
+      "tags": [
+        "java",
+        "streams",
+        "java8",
+        "functional-programming",
+        "interview-puzzles"
+      ],
+      "summary": "Top 10 Java Stream problems: frequency count, groupBy, flatMap, custom sorting, partitioning, and word count with clean solutions.",
+      "content": "## Java 8+ Stream Interview Puzzles\n\n### Problem 1: Word Frequency Count\n```java\n// Input: [\"apple\", \"banana\", \"apple\", \"cherry\", \"banana\", \"apple\"]\n// Output: {apple=3, banana=2, cherry=1}\nMap<String, Long> freq = words.stream()\n    .collect(Collectors.groupingBy(Function.identity(), Collectors.counting()));\n```\n\n### Problem 2: Top N Frequent Elements\n```java\n// Find top 2 most frequent words\nList<String> top2 = freq.entrySet().stream()\n    .sorted(Map.Entry.<String, Long>comparingByValue().reversed())\n    .limit(2)\n    .map(Map.Entry::getKey)\n    .collect(Collectors.toList());\n```\n\n### Problem 3: FlatMap on Nested Lists\n```java\n// Input: List<List<Integer>> nestedList\n// Output: Distinct sorted flat list\nList<Integer> flat = nestedList.stream()\n    .flatMap(Collection::stream)\n    .distinct()\n    .sorted()\n    .collect(Collectors.toList());\n```\n\n### Problem 4: Group Employees by Department\n```java\nMap<String, List<Employee>> byDept = employees.stream()\n    .collect(Collectors.groupingBy(Employee::getDepartment));\n\n// Average salary per department\nMap<String, Double> avgSalary = employees.stream()\n    .collect(Collectors.groupingBy(\n        Employee::getDepartment,\n        Collectors.averagingDouble(Employee::getSalary)));\n```\n\n### Problem 5: Highest Paid Employee per Department\n```java\nMap<String, Optional<Employee>> topPaid = employees.stream()\n    .collect(Collectors.groupingBy(\n        Employee::getDepartment,\n        Collectors.maxBy(Comparator.comparingDouble(Employee::getSalary))));\n```\n\n### Problem 6: Partition Even and Odd Numbers\n```java\nMap<Boolean, List<Integer>> partitioned = numbers.stream()\n    .collect(Collectors.partitioningBy(n -> n % 2 == 0));\n// partitioned.get(true) = even numbers\n// partitioned.get(false) = odd numbers\n```\n\n### Problem 7: Join Strings with Delimiter\n```java\n// Output: \"Alice, Bob, Charlie\"\nString result = names.stream()\n    .sorted()\n    .collect(Collectors.joining(\", \"));\n```\n\n### Problem 8: Word Count from Sentence\n```java\nString sentence = \"the quick brown fox jumps over the lazy dog the\";\nMap<String, Long> wordCount = Arrays.stream(sentence.split(\" \"))\n    .collect(Collectors.groupingBy(Function.identity(), Collectors.counting()));\n// \"the\" -> 3\n```\n\n### Problem 9: Second Largest Number\n```java\nOptional<Integer> secondLargest = numbers.stream()\n    .distinct()\n    .sorted(Comparator.reverseOrder())\n    .skip(1)\n    .findFirst();\n```\n\n### Problem 10: Custom Multi-Field Sorting\n```java\n// Sort employees: first by department ASC, then by salary DESC within department\nList<Employee> sorted = employees.stream()\n    .sorted(Comparator.comparing(Employee::getDepartment)\n                      .thenComparing(Comparator.comparingDouble(Employee::getSalary).reversed()))\n    .collect(Collectors.toList());\n```\n\n### Tricky Edge Cases Interviewers Ask\n- `stream()` vs `parallelStream()`: parallel is not always faster — thread coordination overhead for small lists.\n- `findFirst()` vs `findAny()`: `findAny()` is non-deterministic, preferred in parallel streams for speed.\n- **Lazy evaluation**: intermediate operations (filter, map) are not executed until a terminal operation (collect, count) triggers the pipeline.\n- **Stateful vs stateless**: `sorted()` and `distinct()` are stateful — they buffer elements. Avoid in parallel streams with large data.",
+      "interviewTip": "Interviewers check if you know the difference between stateful and stateless intermediate operations and when parallelStream() is counterproductive. Always mention lazy evaluation when asked how streams work internally.",
+      "references": [
+        {
+          "title": "Java Stream API Documentation",
+          "url": "https://docs.oracle.com/javase/8/docs/api/java/util/stream/Stream.html"
+        }
+      ],
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "iq-tech-002",
+      "title": "Spring Boot Internals Interview Q&A",
+      "category": "Interview Questions",
+      "subcategory": "Java & Spring Q&A",
+      "difficulty": "hard",
+      "tags": [
+        "spring-boot",
+        "spring",
+        "autoconfiguration",
+        "ioc",
+        "bean-lifecycle",
+        "interview"
+      ],
+      "summary": "How @SpringBootApplication works, BeanFactory vs ApplicationContext, injection order, @Conditional, and Spring Boot startup sequence.",
+      "content": "## Spring Boot Internals Interview Q&A\n\n### Q1: What does @SpringBootApplication do?\n**A**: It is a meta-annotation combining three annotations:\n```java\n@SpringBootConfiguration  // Same as @Configuration — declares this as a config class\n@EnableAutoConfiguration  // Triggers Spring Boot's auto-configuration mechanism\n@ComponentScan            // Scans current package and sub-packages for @Component, @Service, etc.\n```\nAuto-configuration works by scanning `spring.factories` (pre-SB 2.7) or `META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports` (SB 3.x) for candidate configuration classes, then applying `@Conditional` conditions to filter what actually gets configured.\n\n### Q2: BeanFactory vs ApplicationContext\n| Feature | BeanFactory | ApplicationContext |\n|---------|-------------|-------------------|\n| Bean instantiation | Lazy (on first getBean()) | Eager (at startup for singletons) |\n| AOP support | No | Yes |\n| Event publishing | No | Yes (ApplicationEventPublisher) |\n| MessageSource (i18n) | No | Yes |\n| Production use | Rarely | Always |\n\n**Interview answer**: ApplicationContext is a superset of BeanFactory. Use ApplicationContext in all production Spring apps.\n\n### Q3: @Autowired Injection Order\nSpring resolves `@Autowired` in this priority:\n1. **Constructor injection** (recommended — field is final, dependencies explicit)\n2. **Setter injection** (for optional dependencies)\n3. **Field injection** (convenient but hides dependencies, hard to test)\n\n```java\n// PREFERRED (constructor injection):\n@Service\npublic class OrderService {\n    private final PaymentService paymentService;\n\n    public OrderService(PaymentService paymentService) {  // @Autowired optional in Spring 4.3+\n        this.paymentService = paymentService;\n    }\n}\n```\n\n### Q4: @Conditional Annotations\n```java\n@ConditionalOnClass(DataSource.class)     // Only if DataSource is on classpath\n@ConditionalOnMissingBean(DataSource.class) // Only if no DataSource bean defined yet\n@ConditionalOnProperty(name=\"feature.enabled\", havingValue=\"true\")\n@ConditionalOnWebApplication              // Only in a web context\n```\nThis is how Spring Boot's auto-configuration is selective — `DataSourceAutoConfiguration` only activates when a JDBC driver is on the classpath.\n\n### Q5: Spring Boot Startup Sequence\n```\n1. SpringApplication.run() called\n2. SpringApplicationRunListeners.starting() — early lifecycle events\n3. Environment prepared (loads application.properties, env vars)\n4. ApplicationContext created (AnnotationConfigServletWebServerApplicationContext)\n5. BeanDefinitions registered (component scan + @Bean methods)\n6. refresh() called:\n   a. BeanFactoryPostProcessors run (e.g., PropertySourcesPlaceholderConfigurer)\n   b. BeanPostProcessors registered (@Autowired, AOP proxying)\n   c. Singleton beans instantiated eagerly\n   d. LifecycleProcessor.start() — @EventListener beans activated\n7. Embedded Tomcat/Jetty started\n8. ApplicationReadyEvent fired — app is serving traffic\n```\n\n### Q6: Common Interview Traps\n- **Circular dependency**: Bean A needs Bean B, Bean B needs Bean A. Fix: refactor, or use `@Lazy` on one.\n- **@Transactional on private methods**: Spring AOP (proxy-based) cannot intercept private methods — `@Transactional` is silently ignored.\n- **Self-invocation**: calling `this.aMethod()` inside a Spring bean bypasses the proxy. Use `AopContext.currentProxy()` or refactor to a separate bean.\n- **Prototype bean in Singleton**: Singleton gets one instance of the prototype at creation time. Use `ApplicationContext.getBean()` or `@Lookup` to get a new prototype each time.",
+      "interviewTip": "Interviewers for senior roles always ask about the @Transactional-on-private-method trap and self-invocation issues. Knowing these proxy limitations signals deep Spring understanding versus surface-level annotation usage.",
+      "references": [
+        {
+          "title": "Spring Boot Reference Documentation",
+          "url": "https://docs.spring.io/spring-boot/docs/current/reference/html/"
+        },
+        {
+          "title": "Spring Framework: Understanding the IoC Container",
+          "url": "https://docs.spring.io/spring-framework/docs/current/reference/html/core.html"
+        }
+      ],
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "iq-tech-003",
+      "title": "Kafka vs RabbitMQ vs SQS: Decision Framework",
+      "category": "Interview Questions",
+      "subcategory": "Technical Deep Dives",
+      "difficulty": "medium",
+      "tags": [
+        "kafka",
+        "rabbitmq",
+        "sqs",
+        "message-queue",
+        "architecture",
+        "decision-framework"
+      ],
+      "summary": "When to choose Kafka (high throughput, replay), RabbitMQ (complex routing), or SQS (managed AWS) with a decision matrix.",
+      "content": "## Kafka vs RabbitMQ vs SQS: Decision Framework\n\n### TL;DR Decision Matrix\n| Criterion | Kafka | RabbitMQ | AWS SQS |\n|-----------|-------|----------|---------|\n| **Throughput** | Millions/sec | Tens of thousands/sec | Thousands/sec |\n| **Message retention** | Days/weeks (configurable) | Until consumed | 14 days max |\n| **Replay / rewind** | Yes (offset control) | No | No |\n| **Routing complexity** | Topic + partitions | Exchange types (direct, topic, fanout, headers) | Simple FIFO / Standard |\n| **Ordering** | Per-partition | Per-queue | FIFO queue only |\n| **Consumer model** | Pull (poll) | Push | Pull (long poll) |\n| **Ops overhead** | High (ZooKeeper/KRaft, brokers) | Medium | None (fully managed) |\n| **Message size** | Default 1MB (configurable) | No hard limit | 256KB (S3 offload for larger) |\n| **Dead letter** | Manual (DLQ topic) | Built-in DLQ | Built-in DLQ |\n\n### When to Choose Kafka\n- **High throughput event streaming**: IoT telemetry, clickstream, log aggregation, financial transactions.\n- **Event sourcing**: You need an immutable append-only log of all state changes.\n- **Replay**: Consumer bug fixed — replay from offset 0 to reprocess all events.\n- **Multiple independent consumers**: Different teams each process the same events (Kafka consumers are independent; RabbitMQ consuming deletes the message).\n- **Stream processing**: Integrate with Kafka Streams or Apache Flink for real-time analytics.\n\n### When to Choose RabbitMQ\n- **Complex routing**: Route messages by content type, headers, or wildcard patterns using topic/headers exchanges.\n- **Task queues**: Background job processing where work is distributed among workers (competing consumers pattern).\n- **Low latency push**: RabbitMQ pushes to consumers; Kafka consumers poll.\n- **Traditional request/reply RPC over messaging**: Easy with correlation IDs and reply queues.\n\n### When to Choose SQS\n- **AWS ecosystem**: Already using Lambda, ECS, EC2 — SQS integrates natively.\n- **Zero ops**: No brokers to manage, scale, or monitor.\n- **Serverless architectures**: Lambda triggered by SQS events automatically.\n- **Simple decoupling**: Service A produces, Service B consumes — no complex routing needed.\n\n### Real Interview Scenarios\n**Q: \"We process 50M user events per day and data science needs to replay the last 30 days of events.\"**\n→ **Kafka**. Only Kafka retains messages for replay. SQS and RabbitMQ delete messages after consumption.\n\n**Q: \"We need background email sending with retry and dead-letter.\"**\n→ **RabbitMQ or SQS**. Simple task queue; no replay needed. SQS if on AWS.\n\n**Q: \"We have microservices on AWS Lambda and need async communication.\"**\n→ **SQS**. Zero ops, native Lambda trigger, scales automatically.\n\n**Q: \"We build an order processing system where Inventory, Billing, and Shipping all need to react to OrderPlaced.\"**\n→ **Kafka**. Each consumer group reads independently; one event, three consumers, no coordination needed.",
+      "interviewTip": "The key differentiator interviewers test: Kafka retains messages and allows replay — RabbitMQ and SQS do not. A well-placed 'it depends on whether you need replay' signals architectural maturity.",
+      "references": [
+        {
+          "title": "Confluent: Kafka vs RabbitMQ",
+          "url": "https://www.confluent.io/learn/kafka-vs-rabbitmq/"
+        },
+        {
+          "title": "AWS SQS Documentation",
+          "url": "https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/"
+        }
+      ],
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "iq-tech-004",
+      "title": "Top 20 Java Concurrency Interview Questions",
+      "category": "Interview Questions",
+      "subcategory": "Technical Deep Dives",
+      "difficulty": "hard",
+      "tags": [
+        "java",
+        "concurrency",
+        "multithreading",
+        "synchronized",
+        "executor",
+        "thread-safety"
+      ],
+      "summary": "volatile vs synchronized, ReentrantLock, ConcurrentHashMap, Executor framework, CountDownLatch, atomic variables, and memory visibility.",
+      "content": "## Top 20 Java Concurrency Interview Questions\n\n### Q1: volatile vs synchronized\n- **volatile**: Guarantees visibility (reads/writes go to main memory, not CPU cache). Does NOT guarantee atomicity. Use for single read/write flag: `private volatile boolean running = true;`\n- **synchronized**: Guarantees both visibility AND atomicity. Blocks other threads.\n- **When volatile is wrong**: `count++` is 3 operations (read, increment, write). Volatile doesn't make this atomic — use `AtomicInteger`.\n\n### Q2: synchronized vs ReentrantLock\n| Feature | synchronized | ReentrantLock |\n|---------|-------------|---------------|\n| Fairness | No | Yes (`new ReentrantLock(true)`) |\n| Try-lock | No | Yes (`lock.tryLock(timeout)`) |\n| Interruptible | No | Yes (`lockInterruptibly()`) |\n| Multiple conditions | One (wait/notify) | Multiple (`lock.newCondition()`) |\n| Auto-release | Yes (end of block) | No — must call `finally { lock.unlock(); }` |\n\n### Q3: ConcurrentHashMap vs Hashtable\n- **Hashtable**: Synchronizes every method — only one thread at a time for ANY operation.\n- **ConcurrentHashMap**: Segment-level locking (Java 7) / CAS + synchronized per-bucket (Java 8+). Multiple threads can read and write simultaneously to different buckets.\n- **HashMap**: Not thread-safe. Concurrent modification causes infinite loops in Java 7 (known bug).\n\n### Q4: Thread Pool Sizing\n```\nFor CPU-bound tasks:  pool_size = N_CPU + 1 (one extra to prevent idle during occasional page faults)\nFor IO-bound tasks:   pool_size = N_CPU × (1 + wait_time / compute_time)\n```\nLittle's Law: `throughput = pool_size / avg_response_time`.\n\n### Q5: CountDownLatch vs CyclicBarrier\n- **CountDownLatch**: One-shot. Main thread waits for N worker threads to complete (`countDown()`). Cannot be reused.\n- **CyclicBarrier**: Reusable. N threads wait for each other at a barrier point, then all proceed together. Used in phased simulations.\n\n```java\n// CountDownLatch example:\nCountDownLatch latch = new CountDownLatch(3);\nfor (int i = 0; i < 3; i++) {\n    executor.submit(() -> { doWork(); latch.countDown(); });\n}\nlatch.await(); // main thread waits until all 3 tasks done\n```\n\n### Q6: Semaphore\nLimits concurrent access to a resource.\n```java\nSemaphore semaphore = new Semaphore(5); // only 5 concurrent DB connections\ntry {\n    semaphore.acquire();\n    // access DB\n} finally {\n    semaphore.release();\n}\n```\n\n### Q7: ThreadLocal Pitfall\n`ThreadLocal` stores per-thread state. **Critical bug**: Thread pool threads are reused — if you don't call `threadLocal.remove()` after a request, the next request reusing that thread sees the previous request's data. Always clean up in a `finally` block or use a `Filter`.\n\n### Q8: Atomic Variables (CAS)\n`AtomicInteger`, `AtomicLong`, `AtomicReference` use **Compare-And-Swap (CAS)** — a single hardware instruction that atomically reads, compares, and writes without blocking.\n```java\nAtomicInteger counter = new AtomicInteger(0);\ncounter.incrementAndGet(); // thread-safe without synchronized\n```\nCAS can suffer from **ABA problem** — use `AtomicStampedReference` when the value might change and change back.\n\n### Q9: happens-before Relationship\nJava Memory Model guarantees that if action A happens-before action B, then A's writes are visible to B. Key relationships:\n- Within a thread: each action happens-before the next.\n- `Thread.start()` happens-before any action in the started thread.\n- `volatile` write happens-before any subsequent volatile read of same field.\n- `lock.unlock()` happens-before any subsequent `lock.lock()` by another thread.\n\n### Q10: Common Deadlock Pattern\n```java\n// Thread 1: locks A then B\n// Thread 2: locks B then A → deadlock!\n// Fix: always acquire locks in the same order across all threads.\n```\nOther fixes: use `tryLock()` with timeout; use `java.util.concurrent` data structures instead of manual locking.",
+      "interviewTip": "Senior interviewers always ask about the ThreadLocal pool-reuse bug — it is a common production defect. Also know that volatile is NOT sufficient for compound operations like check-then-act or read-modify-write.",
+      "references": [
+        {
+          "title": "Java Concurrency in Practice (Goetz)",
+          "url": "https://jcip.net/"
+        },
+        {
+          "title": "Java Memory Model Specification",
+          "url": "https://docs.oracle.com/javase/specs/jls/se17/html/jls-17.html"
+        }
+      ],
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "iq-tech-005",
+      "title": "SQL Interview Top 20 Problems",
+      "category": "Interview Questions",
+      "subcategory": "Technical Deep Dives",
+      "difficulty": "medium",
+      "tags": [
+        "sql",
+        "window-functions",
+        "joins",
+        "subqueries",
+        "interview-problems"
+      ],
+      "summary": "Second highest salary, department-wise max, running totals, top-N per group, consecutive numbers, and common window function patterns.",
+      "content": "## SQL Interview Top 20 Problems\n\n### Problem 1: Second Highest Salary\n```sql\n-- Method 1: Subquery\nSELECT MAX(salary) AS SecondHighest\nFROM employees\nWHERE salary < (SELECT MAX(salary) FROM employees);\n\n-- Method 2: Window function (preferred by interviewers)\nSELECT DISTINCT salary AS SecondHighest\nFROM (\n    SELECT salary, DENSE_RANK() OVER (ORDER BY salary DESC) AS rnk\n    FROM employees\n) ranked\nWHERE rnk = 2;\n```\n\n### Problem 2: Highest Salary per Department\n```sql\nSELECT department_id, employee_name, salary\nFROM (\n    SELECT department_id, employee_name, salary,\n           RANK() OVER (PARTITION BY department_id ORDER BY salary DESC) AS rnk\n    FROM employees\n) ranked\nWHERE rnk = 1;\n```\n\n### Problem 3: Employees with Same Salary as Another\n```sql\nSELECT DISTINCT e1.employee_name, e1.salary\nFROM employees e1\nJOIN employees e2 ON e1.salary = e2.salary AND e1.employee_id != e2.employee_id;\n```\n\n### Problem 4: Running Total (Cumulative Sum)\n```sql\nSELECT order_date, amount,\n       SUM(amount) OVER (ORDER BY order_date\n                         ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS running_total\nFROM orders;\n```\n\n### Problem 5: Customers with No Orders\n```sql\n-- Method 1: LEFT JOIN\nSELECT c.customer_name\nFROM customers c\nLEFT JOIN orders o ON c.customer_id = o.customer_id\nWHERE o.customer_id IS NULL;\n\n-- Method 2: NOT EXISTS (often faster)\nSELECT customer_name\nFROM customers c\nWHERE NOT EXISTS (\n    SELECT 1 FROM orders o WHERE o.customer_id = c.customer_id\n);\n```\n\n### Problem 6: Consecutive Seat Numbers (Consecutive Numbers)\n```sql\n-- Find seats that have at least 3 consecutive available seats\nSELECT DISTINCT l1.seat_id\nFROM cinema l1\nJOIN cinema l2 ON l2.seat_id = l1.seat_id + 1\nJOIN cinema l3 ON l3.seat_id = l1.seat_id + 2\nWHERE l1.is_free = 1 AND l2.is_free = 1 AND l3.is_free = 1\nORDER BY l1.seat_id;\n```\n\n### Problem 7: Top-N Per Group (Top 3 salaries per dept)\n```sql\nSELECT department_id, employee_name, salary\nFROM (\n    SELECT department_id, employee_name, salary,\n           DENSE_RANK() OVER (PARTITION BY department_id ORDER BY salary DESC) AS rnk\n    FROM employees\n) ranked\nWHERE rnk <= 3;\n```\n\n### Problem 8: Duplicate Rows Detection\n```sql\nSELECT email, COUNT(*) AS cnt\nFROM users\nGROUP BY email\nHAVING COUNT(*) > 1;\n```\n\n### Problem 9: Delete Duplicate Rows (Keep One)\n```sql\nDELETE FROM users\nWHERE id NOT IN (\n    SELECT MIN(id)\n    FROM users\n    GROUP BY email\n);\n```\n\n### Problem 10: Pivot Table (Months as Columns)\n```sql\nSELECT\n    employee_id,\n    SUM(CASE WHEN MONTH(date) = 1 THEN amount ELSE 0 END) AS Jan,\n    SUM(CASE WHEN MONTH(date) = 2 THEN amount ELSE 0 END) AS Feb,\n    SUM(CASE WHEN MONTH(date) = 3 THEN amount ELSE 0 END) AS Mar\nFROM sales\nGROUP BY employee_id;\n```\n\n### Window Functions Cheat Sheet\n```sql\nROW_NUMBER()  -- Unique number per row (1,2,3,4,5)\nRANK()        -- Gaps after ties (1,2,2,4)\nDENSE_RANK()  -- No gaps (1,2,2,3)\nLAG(col, 1)   -- Value from previous row\nLEAD(col, 1)  -- Value from next row\nNTILE(4)      -- Divide rows into 4 quartiles\nPERCENT_RANK()-- Relative rank as 0 to 1\n```",
+      "interviewTip": "Interviewers distinguish candidates who use window functions (RANK, DENSE_RANK, LAG/LEAD) from those who write correlated subqueries. Window functions are more readable and typically more performant. Know the difference between RANK and DENSE_RANK.",
+      "references": [
+        {
+          "title": "LeetCode SQL Study Plan",
+          "url": "https://leetcode.com/study-plan/sql/"
+        },
+        {
+          "title": "Mode Analytics SQL Tutorial",
+          "url": "https://mode.com/sql-tutorial/"
+        }
+      ],
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "iq-beh-002",
+      "title": "Behavioral: Tell Me About Your Most Impactful Technical Decision",
+      "category": "Interview Questions",
+      "subcategory": "Behavioral & Leadership",
+      "difficulty": "medium",
+      "tags": [
+        "behavioral",
+        "star-method",
+        "technical-leadership",
+        "decision-making",
+        "kafka",
+        "microservices"
+      ],
+      "summary": "STAR-format guide for framing a technical decision story — problem scale, options, criteria, implementation, and measurable outcome.",
+      "content": "## Behavioral: Most Impactful Technical Decision\n\n### What the Interviewer Is Evaluating\n1. Can you articulate **why** you made a decision (not just what)?\n2. Did you consider trade-offs or just implement the first idea?\n3. Did you measure the outcome?\n4. Did you bring stakeholders along?\n\n### STAR Structure for Technical Decisions\n```\nSituation  → Scale of problem, business context, urgency\nTask       → YOUR role, YOUR ownership (not \"we\")\nAction     → Options considered, decision criteria, implementation steps, how you aligned the team\nResult     → Quantified outcome + secondary effects (team learning, re-used by other teams)\n```\n\n### Example Answer 1: Migrating Synchronous REST to Kafka\n\n**Situation**: *\"Our order processing service made 5 downstream synchronous REST calls (inventory, fraud, warehouse, billing, notification). During peak load, the P99 response time was 8 seconds and we had frequent timeouts causing 3% order failure rate — directly losing revenue.\"*\n\n**Task**: *\"As the tech lead of the Order Platform team, I was responsible for redesigning the integration pattern to eliminate cascading failures without disrupting the existing consumers.\"*\n\n**Action**:\n1. Evaluated three options: (a) Increase timeouts and add retries; (b) Saga pattern with Kafka; (c) Circuit breaker only with Resilience4j.\n2. Rejected (a) because retries amplify load during outages. Rejected (c) because it doesn't fix the fundamental latency — it just fails faster.\n3. Proposed **event-driven Saga**: order service publishes `OrderPlaced` event to Kafka; each downstream service listens and reacts asynchronously. Compensating transactions handle rollback.\n4. Ran a two-week proof-of-concept. Presented latency and failure rate metrics to engineering leadership. Got buy-in from four dependent teams.\n5. Implemented with feature flag — gradual rollout, 5% → 25% → 100% traffic.\n\n**Result**: *\"Synchronous P99 dropped from 8s to 180ms (order service now returns immediately after publishing to Kafka). Order failure rate fell from 3% to 0.04%. The pattern was adopted by two other teams in the org within 3 months.\"*\n\n### Example Answer 2: Microservices Decomposition\n\n**Situation**: *\"Our monolithic Java application had grown to 800K lines of code with 23 teams committing to a single repo. Average deploy took 45 minutes and a bug in the payments module blocked all other team releases.\"*\n\n**Task**: *\"As staff engineer, I owned the decomposition strategy and needed to make the first extraction safe enough that it wouldn't become a cautionary tale for further extractions.\"*\n\n**Action**:\n1. Used Michael Feathers' Strangler Fig pattern: new service runs in parallel, traffic migrated gradually.\n2. Started with Notifications (lowest coupling, clearest bounded context).\n3. Added contract tests (Pact) so the new service could evolve independently without breaking callers.\n4. Established shared principles: each service owns its schema, no shared databases.\n\n**Result**: *\"Notification service deployed independently in 4 minutes vs 45. Six more services extracted over 18 months. DORA metrics: deployment frequency improved 4x, change failure rate dropped 60%.\"*\n\n### Do's and Don'ts\n| Do | Don't |\n|----|-------|\n| Use \"I\" — own it | Say \"we decided\" without your specific role |\n| Give before/after metrics | End with \"it worked out fine\" |\n| Mention rejected alternatives | Skip the decision criteria |\n| Share what you learned | Only talk about the good |\n| Mention impact on others | Claim solo credit for team effort |",
+      "interviewTip": "Interviewers at senior/staff level want to see decision criteria — not just the choice. Explicitly list why you rejected the alternatives. The 'Result' must include numbers: percentages, latency in ms, DORA metrics, revenue impact.",
+      "references": [
+        {
+          "title": "STAR Interview Method",
+          "url": "https://www.indeed.com/career-advice/interviewing/how-to-use-the-star-interview-response-technique"
+        }
+      ],
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "iq-beh-003",
+      "title": "Behavioral: How Do You Handle Technical Disagreements",
+      "category": "Interview Questions",
+      "subcategory": "Behavioral & Leadership",
+      "difficulty": "medium",
+      "tags": [
+        "behavioral",
+        "leadership",
+        "conflict-resolution",
+        "amazon-leadership-principles",
+        "disagree-and-commit"
+      ],
+      "summary": "Principles for respectful technical disagreement — data over opinion, proposing experiments, when to escalate, and Amazon's 'Disagree and Commit'.",
+      "content": "## Behavioral: Handling Technical Disagreements\n\n### What Interviewers Are Evaluating\n- Intellectual humility: can you be wrong?\n- Backbone: do you capitulate or advocate for your position?\n- Professionalism: do you elevate the discussion or personalize it?\n- Amazon LP: **Have Backbone; Disagree and Commit** — once a decision is made, you commit fully even if you disagreed.\n\n### Core Principles\n1. **Seek to understand first**: Before making your case, genuinely understand theirs. \"Help me understand the problem you see with approach X.\"\n2. **Data over opinion**: Replace \"I think\" with evidence — benchmarks, production metrics, published research. \"Our latency numbers at 10K RPS show that approach B adds 40ms — here's the trace.\"\n3. **Propose an experiment**: When both positions seem defensible, frame a time-boxed spike. \"Can we spend two days building a POC of both and compare?\"\n4. **Document the decision**: Regardless of outcome, write an Architecture Decision Record (ADR) capturing options, decision, and rationale.\n5. **Disagree and Commit**: Once the team decides, stop re-litigating. Execute as if it were your idea. Raise concerns proactively if you see evidence during implementation.\n\n### How to Disagree With a Senior Engineer\n```\n1. Affirm common ground: \"I agree our goal is to minimize latency.\"\n2. State your specific concern: \"My concern is that the proposed approach requires a distributed lock\n   on every write which will bottleneck at 2,000 TPS.\"\n3. Offer an alternative with rationale: \"An event-sourced approach with a snapshot cache\n   avoids the lock and scales horizontally — I can show you the architecture.\"\n4. Invite data: \"If you have benchmarks from a similar setup, I'd love to see them.\"\n5. Accept the outcome gracefully: \"If the team still prefers the lock-based approach,\n   I'll implement it and add alerting for when we approach the threshold.\"\n```\n\n### When to Escalate\nEscalate only when:\n- The decision has **irreversible consequences** (data loss risk, security hole, contract commitment).\n- You have **new information** that the original decision didn't account for.\n- The team is **deadlocked** and needs a tiebreaker.\n\nNever escalate to \"win\" — escalate to unblock. Frame it as: \"We've had two productive discussions but haven't reached consensus on X. I'd value [manager/staff engineer]'s perspective to help us break the deadlock.\"\n\n### Full STAR Example\n**Situation**: *\"A principal engineer proposed using a shared database across three microservices for simplicity. I disagreed — shared databases create tight coupling, making independent deployments impossible.\"*\n\n**Task**: *\"I needed to make my case respectfully in a team architecture review attended by 12 engineers and my director.\"*\n\n**Action**:\n1. Acknowledged the value: \"A shared schema does reduce initial API surface area.\"\n2. Presented the specific risk: Drew the dependency graph showing that a schema migration for Service A would require coordinated deployment of Services B and C — exactly what we were trying to avoid.\n3. Proposed an experiment: \"Give me one sprint to prototype the API-based integration and compare the implementation complexity.\"\n4. Documented both options in an ADR.\n\n**Result**: *\"POC showed 2 extra days of effort for API integration vs shared DB. Team voted 9-3 for API-based integration. We shipped independently 12 times in the next quarter with zero cross-team coordination required.\"*",
+      "interviewTip": "Amazon interviewers test 'Have Backbone; Disagree and Commit' directly. Show that you advocate clearly with data, accept the group decision gracefully, then execute without passive resistance. The worst answer is 'I just go along with the team'.",
+      "references": [
+        {
+          "title": "Amazon Leadership Principles",
+          "url": "https://www.amazon.jobs/content/en/our-workplace/leadership-principles"
+        },
+        {
+          "title": "Architecture Decision Records (ADRs)",
+          "url": "https://adr.github.io/"
+        }
+      ],
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "iq-beh-004",
+      "title": "Behavioral: Describe a System That Failed & What You Did",
+      "category": "Interview Questions",
+      "subcategory": "Behavioral & Leadership",
+      "difficulty": "hard",
+      "tags": [
+        "behavioral",
+        "incident-management",
+        "postmortem",
+        "star-method",
+        "production-failure",
+        "reliability"
+      ],
+      "summary": "STAR format for production incident stories — detection, diagnosis, mitigation, root cause, and prevention without sounding incompetent.",
+      "content": "## Behavioral: A System That Failed & What You Did\n\n### Why Interviewers Ask This\n- Everyone has production failures. The differentiator is **how you responded**.\n- They assess: ownership, speed of diagnosis, communication, long-term prevention.\n- Red flag answers: \"Nothing has ever failed\" or blaming external teams.\n\n### Incident Story Structure\n```\n1. DETECTION   — How did you know something was wrong? (Monitoring, alert, user report)\n2. DIAGNOSIS   — How did you identify the root cause? (Tracing, logs, metrics)\n3. MITIGATION  — What did you do to stop the bleeding? (Rollback, feature flag, circuit breaker)\n4. ROOT CAUSE  — What actually caused it?\n5. PREVENTION  — What did you change so it can't happen again?\n```\n\n### Full STAR Example: Database Connection Pool Exhaustion\n\n**Situation**: *\"At 11:47 PM on a Friday, our payment service started throwing errors for ~15% of transactions. Revenue impact was approximately $40,000/minute. I was the on-call engineer.\"*\n\n**Task**: *\"I was responsible for restoring service, identifying root cause, and communicating status to stakeholders every 15 minutes.\"*\n\n**Action**:\n\n1. **Detection**: PagerDuty alert — error rate > 5% for 3 consecutive minutes on `POST /payments`.\n\n2. **Diagnosis (first 10 minutes)**:\n   - Checked Datadog: p99 latency was 12s (baseline: 90ms). Application CPU was normal.\n   - Checked HikariCP metrics: `ConnectionPoolExhausted` exceptions flooding logs.\n   - Traced in Jaeger: requests were stuck waiting for a DB connection for 10+ seconds.\n   - Checked `pg_stat_activity`: 200 active queries, all `IDLE IN TRANSACTION` — not completing.\n   - Root cause found: A newly deployed background job had a `@Scheduled` method inside a `@Transactional` context that called an external HTTP endpoint. The HTTP call was slow (external vendor degradation), holding DB connections open and starving the payment flow.\n\n3. **Mitigation (12 minutes after alert)**:\n   - Deployed a feature flag to disable the background job (pre-built for all scheduled jobs).\n   - DB connection pool immediately drained from 200 to 12 idle.\n   - Error rate dropped to 0.02% within 90 seconds.\n\n4. **Communication**: Posted incident updates in #incidents Slack channel at T+0, T+15, T+30. Sent executive summary at T+45.\n\n5. **Root Cause & Prevention**:\n   - Added an architectural rule: never make network calls inside `@Transactional` methods.\n   - Added a SpotBugs/SonarQube custom rule to detect the pattern at compile time.\n   - Added HikariCP `connectionTimeout` alert at 70% utilization (not 100%).\n   - Wrote blameless postmortem published to all engineers.\n\n**Result**: *\"Service restored in 12 minutes. $480K of revenue protected. Postmortem was cited as a company-wide example of a thorough incident response. The custom SonarQube rule prevented 3 similar issues in the next 6 months.\"*\n\n### How to Tell This Without Sounding Incompetent\n| What to say | What to avoid |\n|-------------|---------------|\n| Focus on YOUR diagnosis methodology | Blaming the engineer who wrote the bug |\n| Show structured thinking under pressure | Saying you 'just panicked' |\n| Quantify speed of resolution | Vague 'we fixed it eventually' |\n| Lead with prevention — show you closed the loop | Treating the incident as a one-off |\n| Mention what you learned | Claiming no mistakes were made |\n\n### Blameless Postmortem Components\n1. Incident timeline (UTC timestamps)\n2. Impact assessment (affected users, revenue, duration)\n3. Root cause analysis (5 Whys)\n4. What went well\n5. What went poorly\n6. Action items with owner and due date",
+      "interviewTip": "The best incident stories show three qualities: structured diagnosis (not guessing), clear communication cadence during the outage, and systemic prevention (not just fixing the immediate bug). Mention blameless postmortem culture.",
+      "references": [
+        {
+          "title": "Google SRE Book: Postmortem Culture",
+          "url": "https://sre.google/sre-book/postmortem-culture/"
+        },
+        {
+          "title": "PagerDuty Incident Response Documentation",
+          "url": "https://response.pagerduty.com/"
+        }
+      ],
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "iq-hld-005",
+      "title": "Design a Distributed Search Engine",
+      "category": "Interview Questions",
+      "subcategory": "High Level Design",
+      "difficulty": "expert",
+      "tags": [
+        "system-design",
+        "hld",
+        "search-engine",
+        "crawler",
+        "inverted-index",
+        "elasticsearch",
+        "mapreduce"
+      ],
+      "summary": "Web-scale search: crawling with politeness, inverted index with TF-IDF/BM25, MapReduce indexing, query processing, and capacity estimation.",
+      "content": "## Design a Distributed Search Engine\n\n### 1. Requirements\n**Functional**: Crawl the web. Index pages. Accept user queries. Return ranked relevant results in < 500ms.\n**Non-Functional**: Index 1 billion pages. Handle 100,000 queries/second. Fresh results (index lag < 24 hours for popular pages). High availability.\n\n### 2. Capacity Estimation\n```\nWeb pages to index : 1 billion\nAvg page size      : 100KB raw HTML\nTotal raw storage  : 100TB (but we only store index, not raw HTML)\nInverted index size: ~10-20% of content size → ~10-20TB\nQueries/day        : 100K QPS × 86,400s = 8.64 billion queries/day\nPeak QPS           : ~300K/sec during news events\n```\n\n### 3. System Components Overview\n```\n[URL Frontier (Priority Queue)]\n        │\n        ▼\n[Crawler Cluster] ──── politeness delay per domain (1 req/sec)\n        │                   robots.txt compliance\n        │                   BFS + PageRank-weighted priority\n        ▼\n[Raw Page Store (S3)] ──► [Content Deduplication (SimHash)]\n        │\n        ▼\n[Document Parser / Tokenizer]\n        │\n        ▼\n[MapReduce Indexing Pipeline]\n  Map:    (docId, word) → emit(word, docId)\n  Reduce: word → sorted list of (docId, tf-idf score)\n        │\n        ▼\n[Inverted Index (Sharded across servers)]\n  word → [(docId, score), (docId, score), ...]\n        │\n        ▼\n[Query Processor]  ◄──── [Spell Corrector] ◄── User Query\n        │\n        ├── Tokenize + stop-word removal\n        ├── Query expansion (synonyms)\n        ├── Scatter to relevant index shards\n        ├── Retrieve posting lists for each term\n        └── BM25 scoring + merge → top-K results\n        │\n        ▼\n[Result Cache (Redis)] ──► Return to user < 500ms\n```\n\n### 4. Crawler Design\n\n**URL Frontier (Priority Queue)**:\n- Store URLs in a priority queue sorted by PageRank score and crawl frequency.\n- Use separate per-domain queues to enforce politeness (max 1 request/domain/second).\n- Deduplicate URLs using a Bloom filter (1B URLs, ~1GB memory at 1% false positive rate).\n\n**robots.txt Compliance**:\n```\nUser-agent: *\nDisallow: /admin/\nCrawl-delay: 2\n```\nCache robots.txt per domain. Respect `Crawl-delay`. Never crawl disallowed paths.\n\n**Content Deduplication (SimHash)**:\n- Convert each page to a 64-bit fingerprint (SimHash).\n- Pages with Hamming distance < 3 are near-duplicates — skip indexing.\n- Saves 20-40% index storage.\n\n### 5. Inverted Index Structure\n```\nTerm        → Posting List\n\"distributed\" → [(doc:5, tf=3, idf=2.1), (doc:12, tf=1, idf=2.1), ...]\n\"system\"      → [(doc:2, tf=5, idf=1.8), (doc:5, tf=2, idf=1.8), ...]\n\nQuery: \"distributed system\"\nStep 1: Fetch posting list for \"distributed\" and \"system\"\nStep 2: Intersect → docs that contain BOTH terms\nStep 3: Score each doc with BM25\nStep 4: Return top-10 by score\n```\n\n### 6. Ranking: TF-IDF vs BM25\n- **TF-IDF**: `score = TF × log(N/DF)`. Suffers from TF saturation (document saying \"cat\" 100 times shouldn't rank higher than one saying it 10 times).\n- **BM25**: Adds a saturation term `(k1+1)×TF / (TF + k1×(1-b+b×dl/avgdl))`. Industry standard — used by Elasticsearch and Solr.\n\n### 7. MapReduce Indexing\n```python\n# Map phase: emit (word, docId) pairs from each document\ndef map(docId, content):\n    for word in tokenize(content):\n        emit(word, (docId, compute_tf(word, content)))\n\n# Reduce phase: aggregate all docIds per word\ndef reduce(word, docId_tf_list):\n    idf = log(N / len(docId_tf_list))\n    posting_list = [(docId, tf * idf) for docId, tf in docId_tf_list]\n    posting_list.sort(by=score, descending=True)\n    write_to_index(word, posting_list)\n```\n\n### 8. Elasticsearch Internals (for bonus points)\n- Each Elasticsearch **index** is split into **shards** (typically 5 primary + 1 replica each).\n- Each shard is a Lucene instance with its own inverted index segments.\n- New documents go into an in-memory buffer → flushed to a new **segment** every 1 second (near-real-time search).\n- Segments are periodically **merged** (like compaction) to keep search fast.\n- **Query routing**: hash(document_id) % num_shards → determines which shard stores the document.",
+      "interviewTip": "Interviewers expect you to know BM25 (not just TF-IDF), and to describe the MapReduce indexing pipeline clearly. Bonus: explain Elasticsearch segment merging and why near-real-time (NRT) search has a 1-second lag by default.",
+      "references": [
+        {
+          "title": "Introduction to Information Retrieval (Manning et al.)",
+          "url": "https://nlp.stanford.edu/IR-book/"
+        },
+        {
+          "title": "Elasticsearch: The Definitive Guide",
+          "url": "https://www.elastic.co/guide/en/elasticsearch/guide/current/index.html"
+        }
+      ],
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    }
+  ]
+}

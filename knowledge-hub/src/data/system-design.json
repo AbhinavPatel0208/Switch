@@ -1,0 +1,618 @@
+{
+  "category": "System Design",
+  "icon": "HiServer",
+  "color": "#6366f1",
+  "subcategories": [
+    "Distributed Systems Fundamentals",
+    "Architecture Patterns",
+    "Scalability & Infrastructure",
+    "High Level Design",
+    "Data & Storage",
+    "Scalability & Reliability",
+    "Distributed Systems"
+  ],
+  "topics": [
+    {
+      "id": "sd-dist-001",
+      "title": "CAP Theorem & PACELC Trade-Offs",
+      "category": "System Design",
+      "subcategory": "Distributed Systems Fundamentals",
+      "difficulty": "medium",
+      "tags": [
+        "cap-theorem",
+        "pacelc",
+        "distributed-systems",
+        "consistency",
+        "availability"
+      ],
+      "summary": "Formal analysis of network partitions, CP vs AP guarantees, and the PACELC theorem extending CAP during normal latency states.",
+      "content": "## CAP & PACELC Theorems in Distributed Architecture\n\n### The CAP Theorem\nA distributed data store can guarantee at most **two out of three** properties simultaneously:\n\n- **C (Strong Consistency)**: Every read receives the most recent write or an explicit error.\n- **A (Availability)**: Every non-failing node returns a non-error response, without guaranteeing it contains the most recent write.\n- **P (Partition Tolerance)**: The system continues operating despite arbitrary network dropped messages or partitioned clusters.\n\n> **The Partition Reality**: Network partitions are unavoidable in distributed physical infrastructure (cut cables, switch reboot, GC pauses). Therefore, architects are always choosing between **CP** and **AP** during a partition!\n\n### Real-World Systems Classification\n\n```\nCP (Consistency + Partition Tolerance):\n├── Apache ZooKeeper (Zab consensus)\n├── Google Spanner (TrueTime atomic clocks)\n├── HBase / MongoDB (Single primary mode)\n└── etcd (Raft consensus)\n\nAP (Availability + Partition Tolerance):\n├── Amazon DynamoDB (Eventual consistency mode)\n├── Apache Cassandra (Quorum tuning R + W > N)\n├── CouchDB\n└── Riak\n```\n\n### The PACELC Theorem (Beyond CAP)\nCAP only describes behavior **when a network partition occurs (P)**. What about normal operation (99.9% of the time)?\n\n**PACELC**: If there is a **P**artition, how does the system choose between **A**vailability and **C**onsistency? **E**lse, how does the system choose between **L**atency and **C**onsistency?\n\n| System | PACELC Classification | Explanation |\n| :--- | :--- | :--- |\n| **DynamoDB** | **PA/EL** | In partition: Available. In normal: Low Latency over Strong Consistency. |\n| **Cassandra** | **PA/EL** | Tunable consistency, optimized for minimal read/write latency. |\n| **Spanner** | **PC/EC** | In partition: Consistent. In normal: Consistency over Latency. |\n| **MongoDB** | **PC/EC** | Directs writes to primary node, sacrificing latency for consistency. |",
+      "references": [
+        {
+          "title": "Daniel Abadi: PACELC Theorem",
+          "url": "https://en.wikipedia.org/wiki/PACELC_theorem"
+        },
+        {
+          "title": "Martin Kleppmann: Designing Data-Intensive Applications",
+          "url": "https://dataintensive.net/"
+        }
+      ],
+      "interviewTip": "Distinguish between PACELC and CAP. Mentioning PACELC when discussing DynamoDB or Cassandra demonstrates senior-level system design depth.",
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "sd-dist-002",
+      "title": "Consistent Hashing & Virtual Nodes (Dynamo Architecture)",
+      "category": "System Design",
+      "subcategory": "Distributed Systems Fundamentals",
+      "difficulty": "hard",
+      "tags": [
+        "consistent-hashing",
+        "virtual-nodes",
+        "dynamo",
+        "sharding",
+        "caching"
+      ],
+      "summary": "Solve the node resharding problem using a hash ring and virtual nodes to distribute keys uniformly across cache/database clusters.",
+      "content": "## Consistent Hashing & Virtual Nodes\n\n### The Problem with Simple Modulo Hashing\nNaive hashing: `serverIndex = hash(key) % N`.\nIf a cluster has $N=4$ servers and you add 1 server ($N=5$), **almost 100% of keys remap to new servers**! This causes catastrophic cache stampedes and massive data rebalancing.\n\n### The Consistent Hash Ring\nConsistent hashing maps both servers and data keys onto a circular **Hash Ring** (e.g. integer range $0$ to $2^{32}-1$ using SHA-256 or Murmur3):\n\n```\n            [Node A: 10,000]\n           /                \\\n[Node C: 70,000]          [Node B: 40,000]\n           \\                /\n             [Ring: 0 to 2^32]\n```\n\n- **Key Assignment**: A key is hashed onto the ring and stored on the **first server encountered traveling clockwise**.\n- **Adding/Removing a Node**: Only keys located between the new node and its counter-clockwise predecessor must move. All other keys remain untouched! (Only $K/N$ keys move on average).\n\n### Non-Uniform Distribution & The Virtual Nodes Solution\nIf physical servers hash unevenly, one node can become a massive hotspot (handling 80% of data).\n- **Virtual Nodes (V-Nodes)**: Each physical machine is mapped to **100-300 distinct virtual points** on the ring (e.g. `NodeA#1`, `NodeA#2`, `NodeA#3`).\n- **Benefits**:\n  1. Standard deviation of data distribution drops below 3% (uniform spread).\n  2. Heterogeneous hardware: Powerful 64-core servers can be assigned 500 V-nodes, while smaller 16-core servers receive 125 V-nodes.",
+      "references": [
+        {
+          "title": "Amazon Dynamo Paper (Allman et al.)",
+          "url": "https://www.allthingsdistributed.com/files/amazon-dynamo-sosp2007.pdf"
+        }
+      ],
+      "interviewTip": "Explain why virtual nodes are essential: Without virtual nodes, consistent hashing produces statistically skewed partitions.",
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "sd-pat-001",
+      "title": "Transactional Outbox & Event-Driven Architecture",
+      "category": "System Design",
+      "subcategory": "Architecture Patterns",
+      "difficulty": "hard",
+      "tags": [
+        "outbox-pattern",
+        "event-driven",
+        "cdc",
+        "debezium",
+        "kafka"
+      ],
+      "summary": "Solve the Dual-Write problem using the Transactional Outbox Pattern and Change Data Capture (CDC) with Debezium.",
+      "content": "## The Dual-Write Problem & Transactional Outbox\n\n### The Dual-Write Disaster\nIn microservices, saving state to a relational database AND emitting an event to Apache Kafka creates a distributed race condition:\n\n```\nClient ──► Order Service ──(1. DB Insert: OK)──► PostgreSQL\n               │\n               └──(2. Kafka Send: Network Timeout / Crash!) ──► Kafka ❌\n```\n- If DB commit succeeds but Kafka fails: Data exists in DB, but downstream services (Inventory, Notification) never know!\n- Distributed 2-Phase Commit (2PC / XA) is slow, creates tight locking, and is unsupported by modern brokers.\n\n### The Transactional Outbox Solution\nWrite both the business entity AND the event to the **same local database** inside a single ACID database transaction!\n\n```sql\n-- Single ACID Transaction:\nBEGIN;\nINSERT INTO orders (id, user_id, total, status) VALUES ('ord_101', 42, 199.99, 'CONFIRMED');\nINSERT INTO outbox_events (id, aggregate_type, aggregate_id, event_type, payload) \nVALUES (gen_random_uuid(), 'Order', 'ord_101', 'OrderCreated', '{\"total\": 199.99}');\nCOMMIT;\n```\n\n### How Events Reach Kafka: Change Data Capture (CDC)\nInstead of polling the table with `SELECT ... FOR UPDATE` (which burns CPU and locks rows), use **Debezium CDC**:\n\n```\nPostgreSQL WAL Log ──► Debezium CDC Connector ──► Apache Kafka ──► Downstream Consumers\n(Append-only commit log) (Parses changes with 0 DB query overhead)\n```\n\n### Guarantees Achieved\n- **Zero Lost Events**: Events are guaranteed to be published because they are saved within the same ACID transaction.\n- **At-Least-Once Delivery**: Downstream consumers must be idempotent (e.g. deduplicating via unique message ID).",
+      "references": [
+        {
+          "title": "Microservices.io: Transactional Outbox Pattern",
+          "url": "https://microservices.io/patterns/data/transactional-outbox.html"
+        }
+      ],
+      "interviewTip": "Explain why polling outbox tables with 'SELECT ... FOR UPDATE SKIP LOCKED' is inferior to tailing the PostgreSQL WAL using Debezium CDC.",
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "sd-pat-002",
+      "title": "CQRS & Event Sourcing Architecture",
+      "category": "System Design",
+      "subcategory": "Architecture Patterns",
+      "difficulty": "expert",
+      "tags": [
+        "cqrs",
+        "event-sourcing",
+        "read-models",
+        "projections",
+        "axon"
+      ],
+      "summary": "Decouple read and write models with Command Query Responsibility Segregation and immutable event streams.",
+      "content": "## CQRS & Event Sourcing\n\n### What is CQRS?\nCommand Query Responsibility Segregation (CQRS) splits the application model into two distinct paths:\n- **Command (Write Model)**: Handles business intent, enforces invariants, executes transactions, returns void/status (e.g., `PlaceOrderCommand`).\n- **Query (Read Model)**: Read-only optimized denormalized views (e.g., Elasticsearch for search, Redis for user profile cards).\n\n```\nUser Action\n    │\n    ├──(Command)──► Command Handler ──► Write DB (PostgreSQL) ──► Domain Event Emitted\n    │                                                                   │\n    │                                                            (Async Projection)\n    │                                                                   ▼\n    └──(Query)────► Query Service   ◄─────────────────────────── Read DB (Elasticsearch)\n```\n\n### Event Sourcing Fundamentals\nInstead of storing only the *current state* of an entity, Event Sourcing stores the **full append-only sequence of immutable domain events** that produced that state:\n\n```\nTraditional CRUD Table (Only Current State):\nAccount #42 | Balance: $150\n\nEvent Sourced Log (Audit Trail of All State Mutations):\n1. AccountOpenedEvent    (id: 42, initial: $0)\n2. MoneyDepositedEvent   (id: 42, amount: $200)\n3. MoneyWithdrawnEvent   (id: 42, amount: $50)\n── Current state ($150) is reconstructed by replaying events!\n```\n\n### Snapshots for Performance\nReplaying 50,000 events to load an account is slow. Event Sourcing uses **Snapshots**: Every 100 events, save a snapshot of the current state. When loading, read the latest snapshot and replay only subsequent events.",
+      "references": [
+        {
+          "title": "Martin Fowler: Event Sourcing",
+          "url": "https://martinfowler.com/eaaDev/EventSourcing.html"
+        }
+      ],
+      "interviewTip": "Highlight the primary trade-off of CQRS: Eventual Consistency between the Write database and Read projections.",
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "sd-scale-001",
+      "title": "Distributed Rate Limiting & Sliding Window Algorithm",
+      "category": "System Design",
+      "subcategory": "Scalability & Infrastructure",
+      "difficulty": "medium",
+      "tags": [
+        "rate-limiting",
+        "sliding-window",
+        "redis",
+        "token-bucket",
+        "api-gateway"
+      ],
+      "summary": "Design scalable API rate limiters using Token Bucket, Sliding Window Log, and atomic Redis Lua scripts.",
+      "content": "## Distributed Rate Limiting Architecture\n\n### Algorithm Comparison\n\n| Algorithm | Memory Overhead | Accuracy | Burst Tolerance |\n| :--- | :--- | :--- | :--- |\n| **Token Bucket** | $O(1)$ per user | High | **Yes** (allows burst up to bucket capacity) |\n| **Leaky Bucket** | $O(1)$ per user | High | No (smooth constant egress rate) |\n| **Fixed Window** | $O(1)$ per user | Low (2x burst at boundaries) | Yes |\n| **Sliding Window Log** | $O(N)$ requests | 100% exact | Yes |\n\n### Production Implementation: Redis Sliding Window with Lua\nTo prevent race conditions between `ZREMRANGEBYSCORE` and `ZCARD`, execute the check atomically inside a **Redis Lua script**:\n\n```lua\n-- KEYS[1]: User rate limit key (e.g. rate_limit:user_123)\n-- ARGV[1]: Current timestamp in milliseconds\n-- ARGV[2]: Window size in milliseconds (e.g. 60000)\n-- ARGV[3]: Max requests allowed in window (e.g. 100)\n\nlocal key = KEYS[1]\nlocal now = tonumber(ARGV[1])\nlocal window = tonumber(ARGV[2])\nlocal limit = tonumber(ARGV[3])\nlocal clearBefore = now - window\n\n-- 1. Remove timestamps outside the sliding window\nredis.call('ZREMRANGEBYSCORE', key, '-inf', clearBefore)\n\n-- 2. Count remaining requests in current window\nlocal currentRequests = redis.call('ZCARD', key)\n\nif currentRequests < limit then\n    -- 3. Add current request\n    redis.call('ZADD', key, now, now)\n    redis.call('PEXPIRE', key, window)\n    return 1 -- Allowed\nelse\n    return 0 -- Denied (HTTP 429 Too Many Requests)\nend\n```\n\n### Standard HTTP Response Headers\nWhen rate limiting, always return these headers:\n- `X-RateLimit-Limit`: Maximum requests per window (e.g., 100)\n- `X-RateLimit-Remaining`: Remaining quota in window (e.g., 23)\n- `Retry-After`: Seconds to wait before retrying when 429 is returned",
+      "references": [
+        {
+          "title": "Stripe Engineering: Scaling your API with rate limiters",
+          "url": "https://stripe.com/blog/rate-limiters"
+        }
+      ],
+      "interviewTip": "Highlight why executing in a Redis Lua script is essential: It guarantees atomicity without requiring distributed locks, preventing concurrency race conditions.",
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "sd-scale-002",
+      "title": "Reverse Proxy vs Load Balancer (L4 vs L7) & NGINX Architecture",
+      "category": "System Design",
+      "subcategory": "Scalability & Infrastructure",
+      "difficulty": "medium",
+      "tags": [
+        "load-balancer",
+        "nginx",
+        "l4-l7",
+        "reverse-proxy",
+        "alb"
+      ],
+      "summary": "Understand Layer 4 vs Layer 7 routing, SSL termination, sticky sessions, and NGINX event-driven worker processes.",
+      "content": "## Load Balancing & Reverse Proxies (L4 vs L7)\n\n### Layer 4 (Transport) vs Layer 7 (Application) Balancing\n\n| Feature | Layer 4 (e.g. AWS NLB, HAProxy TCP) | Layer 7 (e.g. AWS ALB, NGINX, Envoy) |\n| :--- | :--- | :--- |\n| **OSI Layer** | Transport (TCP/UDP, IP, Port) | Application (HTTP, HTTPS, WebSockets, gRPC) |\n| **Inspection** | Does NOT inspect HTTP payload | Parses HTTP headers, cookies, URL paths, JSON |\n| **Routing** | Based strictly on IP and Port | Path-based (`/api/v1/orders` vs `/images/*`) |\n| **SSL/TLS** | Pass-through or termination | Full TLS termination, SNI, HTTP/2 to HTTP/1.1 translation |\n| **Latency** | Ultra-low (Microseconds) | Slightly higher (Parses and decrypts HTTP packets) |\n| **Throughput** | Millions of packets/sec | High, bound by CPU for TLS decryption |\n\n```\nL7 Routing Architecture:\nClient ──► AWS ALB (SSL Decryption & Path Routing)\n                │\n                ├── /api/orders/* ────► Order Microservice Cluster\n                ├── /api/users/*  ────► User Microservice Cluster\n                └── /static/*     ────► AWS S3 / CloudFront CDN\n```\n\n### NGINX Event-Driven Architecture\nUnlike Apache HTTP Server (which spawned one thread/process per request, maxing out around 10,000 connections), **NGINX uses an asynchronous, non-blocking event-driven architecture** (via `epoll` on Linux):\n- A small number of single-threaded **Worker Processes** (matching CPU core count).\n- Each worker handles tens of thousands of concurrent connections in a single event loop without thread context-switching overhead (solves the C10K problem).",
+      "references": [
+        {
+          "title": "NGINX Architecture Overview",
+          "url": "https://www.nginx.com/blog/inside-nginx-how-we-designed-for-performance-scale/"
+        }
+      ],
+      "interviewTip": "Explain why gRPC routing requires an L7 load balancer (like Envoy or AWS ALB): Because gRPC multiplexes multiple calls over a single persistent HTTP/2 TCP connection, an L4 balancer would route all traffic to a single backend node!",
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "sd-hld-001",
+      "title": "Design a Chat System (WhatsApp Scale)",
+      "category": "System Design",
+      "subcategory": "High Level Design",
+      "difficulty": "hard",
+      "tags": [
+        "websocket",
+        "chat",
+        "cassandra",
+        "fan-out",
+        "presence",
+        "whatsapp"
+      ],
+      "summary": "Design a real-time messaging system at WhatsApp scale covering WebSocket connections, message ordering, group chat fan-out, and Cassandra storage.",
+      "content": "## Design a Chat System (WhatsApp Scale)\n\n### Requirements Clarification\n- **Scale**: 2 billion users, 100 billion messages/day (~1.15M msg/sec peak)\n- **Features**: 1-1 chat, group chat (max 256 members), online presence, delivery/read receipts, media sharing\n- **Guarantees**: Messages delivered at-least-once, ordering preserved per conversation\n\n### High-Level Architecture\n\n```\n                         ┌─────────────────────────────────────────┐\n                         │           API Gateway / LB               │\n                         └──────────────┬──────────────────────────┘\n                                        │\n              ┌─────────────────────────┼──────────────────────────┐\n              │                         │                           │\n      ┌───────▼───────┐        ┌────────▼──────┐         ┌─────────▼──────┐\n      │  Chat Service  │        │ Presence Svc  │         │  Media Service  │\n      │ (WebSocket)    │        │ (Heartbeats)  │         │ (S3 + CDN)      │\n      └───────┬───────┘        └────────┬──────┘         └────────────────┘\n              │                         │\n      ┌───────▼──────────┐    ┌─────────▼──────┐\n      │  Message Queue    │    │   Redis Cluster │\n      │  (Kafka)          │    │  (Presence TTL) │\n      └───────┬──────────┘    └────────────────┘\n              │\n      ┌───────▼──────────────────────────┐\n      │   Cassandra Cluster               │\n      │   (Messages + Conversation Data)  │\n      └───────────────────────────────────┘\n```\n\n### Transport: WebSocket vs HTTP Long-Polling\n\n| Approach | Latency | Server Cost | Mobile Battery |\n|:---|:---|:---|:---|\n| **WebSocket** | ~10ms | Higher (persistent TCP) | High (keep-alive pings) |\n| **HTTP Long-Polling** | ~100ms | Lower | Lower |\n| **Server-Sent Events** | ~20ms | Medium | Medium |\n\n**Decision**: WebSocket for web/desktop clients. For mobile, use MQTT (designed for low-bandwidth, high-latency mobile networks — used by Facebook Messenger and WhatsApp).\n\n### Message Ordering\nProblem: Messages sent by User A and User B concurrently may arrive out of order at the server.\n\n**Solution — Snowflake IDs**: Generate monotonically increasing 64-bit IDs encoding timestamp + datacenter ID + sequence number. Messages are sorted by this ID within a conversation.\n\n```\nSnowflake ID (64-bit):\n[41 bits: timestamp ms] [10 bits: machine ID] [12 bits: sequence]\nMax: 4096 IDs/ms per machine — more than sufficient.\n```\n\n### Group Chat Fan-Out\nFor a group of 256 members, when User A sends a message:\n1. Message saved to Cassandra with a `conversation_id`.\n2. Kafka event published to topic `group-messages`.\n3. **Fan-out service** reads group membership (cached in Redis), sends push notification or WebSocket delivery to all 255 online members.\n4. For offline members: message stored in their inbox table; delivered on next connect.\n\n**Capacity**: 256 recipients × 100M group messages/day = 25.6 billion fan-out deliveries/day. Fan-out workers scale horizontally.\n\n### Cassandra Schema for Messages\n```sql\nCREATE TABLE messages (\n    conversation_id  UUID,\n    message_id       BIGINT,   -- Snowflake ID (time-ordered)\n    sender_id        BIGINT,\n    content          TEXT,\n    msg_type         TEXT,     -- 'text' | 'image' | 'video'\n    created_at       TIMESTAMP,\n    PRIMARY KEY (conversation_id, message_id)\n) WITH CLUSTERING ORDER BY (message_id DESC);\n```\nCassandra chosen because: wide-column model maps perfectly to conversation timelines, linear write scalability, built-in TTL for message expiry.\n\n### Online Presence\n- Each client sends a heartbeat every 5 seconds to the Presence Service.\n- Presence Service writes `user_id → {status, last_seen}` in Redis with a 10-second TTL.\n- If TTL expires (no heartbeat), user is marked offline.\n- Friends query presence via a Presence Service API (not directly Redis — to allow future caching).\n\n### Delivery Receipts\n- **Sent** (one tick): Server received the message.\n- **Delivered** (two ticks): Recipient's device ACKed delivery via WebSocket.\n- **Read** (blue ticks): Recipient opened the conversation — client sends a read receipt event.",
+      "interviewTip": "Interviewers love asking about the group chat fan-out problem. Distinguish between fan-out-on-write (push to all members immediately) and pull-on-connect (lazy fetch on login). For large groups (256+), discuss hybrid approaches and the cost of fan-out at scale.",
+      "references": [
+        {
+          "title": "WhatsApp Engineering Blog",
+          "url": "https://engineering.fb.com/2022/07/25/messaging/whatsapp-handling-10-billion-messages-per-day/"
+        },
+        {
+          "title": "Alex Xu: System Design Interview Vol 1 — Chat System",
+          "url": "https://bytebytego.com/courses/system-design-interview/design-a-chat-system"
+        }
+      ],
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "sd-hld-002",
+      "title": "Design Twitter/Instagram Feed",
+      "category": "System Design",
+      "subcategory": "High Level Design",
+      "difficulty": "hard",
+      "tags": [
+        "feed",
+        "fan-out",
+        "redis",
+        "timeline",
+        "celebrity-problem",
+        "twitter"
+      ],
+      "summary": "Design a social media feed with fan-out-on-write vs fan-out-on-read trade-offs, Redis sorted sets for timelines, and a hybrid approach for celebrity accounts.",
+      "content": "## Design Twitter/Instagram Feed\n\n### Capacity Estimation\n- **Users**: 100M daily active users (DAU)\n- **Tweets**: 500M tweets/day (~5,800 tweets/sec)\n- **Feed reads**: Each user checks feed ~10x/day → 1 billion feed reads/day (~11,500 reads/sec)\n- **Average followers**: 300. Max (celebrities): 150M (Cristiano Ronaldo).\n- **Storage**: avg tweet = 280 chars = ~280 bytes. 500M × 280B = **140 GB/day** just for tweet text.\n\n### Architecture Overview\n\n```\n  User A posts tweet\n        │\n        ▼\n  ┌─────────────┐     ┌──────────────┐     ┌───────────────────┐\n  │ Tweet Svc   │────►│  Kafka       │────►│  Fan-out Worker   │\n  │ (Write API) │     │  (tweet-     │     │  (reads follower  │\n  └─────────────┘     │   events)    │     │   list from DB)   │\n                       └──────────────┘     └────────┬──────────┘\n                                                     │\n                                      ┌──────────────▼──────────────┐\n                                      │  Redis Cluster               │\n                                      │  user:{id}:feed → ZSET       │\n                                      │  score = tweet_timestamp     │\n                                      └─────────────────────────────┘\n  User B reads feed\n        │\n        ▼\n  ┌─────────────┐     ┌─────────────────────────────┐\n  │  Feed API   │────►│  Redis: ZREVRANGE user:B:feed│\n  │             │     │  (top 100 tweet IDs)          │\n  └─────────────┘     └──────────────┬───────────────┘\n                                     │ fetch tweet details\n                                     ▼\n                               Tweet Store (MySQL / Cassandra)\n```\n\n### Approach 1: Fan-Out-On-Write (Push Model)\nWhen a user tweets, **immediately push** the tweet ID to the Redis feed sorted set of every follower.\n\n**Pros**:\n- Feed reads are O(log N) — just read from Redis ZSET. Extremely fast.\n- No computation on read path.\n\n**Cons**:\n- If a celebrity has **150M followers** and tweets, the fan-out worker must write to 150M Redis keys. At 1M writes/sec, this takes **150 seconds** — during which followers see a stale feed.\n- High write amplification: 500M tweets × 300 avg followers = **150 billion Redis writes/day**.\n\n### Approach 2: Fan-Out-On-Read (Pull Model)\nWhen a user requests their feed, **dynamically compute** it by fetching recent tweets from all followed accounts.\n\n**Pros**: Works for celebrities (no fan-out storm). Writes are cheap.\n\n**Cons**: Read is extremely expensive — join tweets from 1,000 followed users, sort by time. Cannot be done in real-time for all users at scale.\n\n### Hybrid Approach (Twitter's Actual Strategy)\n1. **Regular users** (< 1M followers): Fan-out-on-write into Redis ZSET feed.\n2. **Celebrity/high-follower accounts**: Excluded from fan-out. Their tweets are fetched on-demand when a user requests their feed and **merged** with the pre-built Redis feed.\n\n```\nFeed Request = Redis ZSET (pre-built from normal follows)\n             + Live fetch from celebrity tweet tables\n             → Merge & sort by timestamp → Return top 100\n```\n\n### Redis Sorted Set Schema\n```\nKey: user:{user_id}:feed\nMembers: tweet_id (string)\nScore: tweet_timestamp (Unix ms) ← enables ZREVRANGEBYSCORE for pagination\n\nZADD user:123:feed 1729600000000 \"tweet_abc\"\nZREVRANGE user:123:feed 0 99 WITHSCORES  ← get top 100 tweets\nZREMRANGEBYRANK user:123:feed 500 -1     ← trim feed to 500 entries\n```\n\n### Content Delivery\n- Media (images, videos) stored in **S3** → served via **CloudFront CDN**.\n- Tweet metadata cached in a **Tweet Cache** (Redis or Memcached) — avoid hitting MySQL on every feed render.",
+      "interviewTip": "The celebrity problem is the core of this question. Interviewers want to hear you identify the fan-out-on-write failure mode with high-follower accounts before they prompt you. Propose the hybrid approach proactively and quantify: 150M writes for one Ronaldo tweet at 1M writes/sec = 150-second delay.",
+      "references": [
+        {
+          "title": "Twitter Engineering: The Infrastructure Behind Twitter's Timeline",
+          "url": "https://blog.twitter.com/engineering/en_us/a/2013/new-tweets-per-second-record-and-how"
+        },
+        {
+          "title": "ByteByteGo: Design Twitter Feed",
+          "url": "https://bytebytego.com/courses/system-design-interview/design-a-news-feed-system"
+        }
+      ],
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "sd-hld-003",
+      "title": "Design a Payment Processing System",
+      "category": "System Design",
+      "subcategory": "High Level Design",
+      "difficulty": "expert",
+      "tags": [
+        "payments",
+        "idempotency",
+        "saga",
+        "pci-dss",
+        "exactly-once",
+        "reconciliation"
+      ],
+      "summary": "Design a payment system with idempotency keys, exactly-once semantics, saga-based distributed transactions, and PCI-DSS compliance.",
+      "content": "## Design a Payment Processing System\n\n### Requirements\n- Process 1M transactions/day (~12 TPS average, 100 TPS peak)\n- Prevent double charges under retries and network failures\n- PCI-DSS Level 1 compliance (handle card data)\n- Reconciliation to catch discrepancies between internal records and bank statements\n\n### Architecture\n\n```\n  Client App\n      │  POST /payments {idempotency_key: \"client-uuid-123\", amount: 99.99}\n      ▼\n  ┌──────────────────┐\n  │  Payment Gateway  │──► TLS 1.3, WAF, DDoS protection\n  │  (API Layer)      │\n  └────────┬─────────┘\n           │\n  ┌────────▼─────────┐     ┌─────────────────┐\n  │  Payment Service  │────►│  Idempotency DB  │\n  │  (Core Logic)     │     │  (Redis/Postgres) │\n  └────────┬─────────┘     └─────────────────┘\n           │\n    ┌──────┼───────────┐\n    │      │           │\n    ▼      ▼           ▼\n  Auth   Ledger    Fraud Detection\n  Svc    Service   (ML model)\n    │\n    ▼\n  PSP (Stripe/Braintree)\n  or Bank Acquiring Network\n    │\n    ▼\n  Card Networks (Visa/Mastercard)\n```\n\n### Idempotency Keys — The Core Safety Mechanism\nNetwork retries will happen. Without idempotency, a retry charges the customer twice.\n\n**Flow**:\n1. Client generates a UUID (`idempotency_key`) before calling the API.\n2. Payment Service checks Redis/Postgres: `GET idempotency:{key}`.\n3. If found → return the cached response from the first request (no re-processing).\n4. If not found → process payment, then atomically store `{key → response}` with a 24h TTL.\n\n```sql\n-- PostgreSQL idempotency table (durable)\nCREATE TABLE idempotency_keys (\n    idempotency_key TEXT PRIMARY KEY,\n    response_status INT,\n    response_body   JSONB,\n    created_at      TIMESTAMPTZ DEFAULT NOW(),\n    expires_at      TIMESTAMPTZ DEFAULT NOW() + INTERVAL '24 hours'\n);\n```\n\n### Distributed Saga Pattern for Payment\nPayment involves multiple services: Fraud Check → Authorization → Inventory Reserve → Ledger Debit. If any step fails, compensating transactions must run.\n\n```\nSaga Steps (Choreography-based):\n1. FraudCheckCommand    → FraudPassed event  OR  FraudFailed → END\n2. AuthorizeCommand     → Authorized event   OR  AuthFailed  → COMPENSATE\n3. LedgerDebitCommand   → Debited event      OR  DebitFailed → Reverse Auth\n4. NotifyCommand        → PaymentCompleted\n\nCompensating Transactions (run in reverse on failure):\nStep 3 fails → Void Authorization (call PSP void API)\nStep 4 fails → Reverse Ledger entry (idempotent reversal)\n```\n\n### Why Two-Phase Commit (2PC) Fails for Payments\n- 2PC requires a **distributed lock** across all participants during the prepare phase.\n- If the coordinator crashes after PREPARE but before COMMIT, all participants are **blocked indefinitely** waiting for a decision → system unavailable.\n- PSPs (like Stripe) do not support 2PC protocols.\n- **Saga** with compensating transactions is the industry standard.\n\n### Double-Spend Prevention\n- Use **database-level row locking**: `SELECT ... FOR UPDATE` on account balance row before deducting.\n- Alternatively, use **optimistic concurrency control** with a `version` column: `UPDATE accounts SET balance = balance - 99.99, version = version + 1 WHERE id = 42 AND version = 7` — fails if another transaction already updated the row.\n\n### PCI-DSS Considerations\n- **Never store raw card data** (PAN, CVV). Tokenize immediately upon receipt using a PSP like Stripe.\n- Encrypt all data at rest (AES-256) and in transit (TLS 1.3).\n- Network segmentation: Payment service in isolated VPC with no public internet access.\n- Audit logs: Every payment state change logged to immutable append-only store.\n\n### Reconciliation\n- Daily batch job: Compare internal `ledger` table totals against PSP settlement reports.\n- Discrepancies flagged for manual review. Auto-reconciliation for small rounding errors (< $0.01).",
+      "interviewTip": "Interviewers will probe exactly-once semantics. Clarify: true exactly-once delivery is impossible in distributed systems — what you achieve is idempotent at-least-once. The idempotency key pattern is the correct answer. Also mention that reconciliation is essential even with perfect code — bank errors happen.",
+      "references": [
+        {
+          "title": "Stripe: Idempotent Requests",
+          "url": "https://stripe.com/docs/api/idempotent_requests"
+        },
+        {
+          "title": "Microservices.io: Saga Pattern",
+          "url": "https://microservices.io/patterns/data/saga.html"
+        }
+      ],
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "sd-hld-004",
+      "title": "Design a Search Autocomplete System",
+      "category": "System Design",
+      "subcategory": "High Level Design",
+      "difficulty": "medium",
+      "tags": [
+        "autocomplete",
+        "trie",
+        "redis",
+        "typeahead",
+        "debounce",
+        "cdn"
+      ],
+      "summary": "Design a typeahead search autocomplete system using Trie structures, Redis sorted sets for frequency ranking, and CDN caching for popular queries.",
+      "content": "## Design a Search Autocomplete System\n\n### Requirements\n- Return top 5 autocomplete suggestions within **100ms** of each keystroke\n- Scale: Google Search processes 8.5 billion searches/day → ~100,000 QPS\n- Suggestions ranked by historical search frequency\n- Real-time updates: trending searches should surface within minutes\n\n### Client-Side Optimization First\n**Debounce**: Don't fire a request on every keystroke. Wait 150-300ms after the user stops typing.\n\n```javascript\n// Debounced autocomplete fetch\nconst debouncedFetch = debounce((query) => {\n  fetch(`/autocomplete?q=${query}`)\n    .then(res => res.json())\n    .then(suggestions => renderDropdown(suggestions));\n}, 200);\n\ninput.addEventListener('input', (e) => debouncedFetch(e.target.value));\n```\n\n**Client-side cache**: Cache suggestions for prefixes already typed in this session. If user typed \"sea\" and got results, reuse them when query is still \"sea\".\n\n### Architecture\n\n```\n  User types \"sea\"\n       │\n       ▼ (debounced 200ms)\n  ┌────────────┐     Cache Hit?    ┌──────────────────┐\n  │  Browser   │─────────────────►│  CDN (CloudFront) │\n  │  (client)  │                  │  Caches popular   │\n  └────────────┘                  │  prefixes 1-5 min │\n                                  └──────────┬────────┘\n                                             │ Cache Miss\n                                             ▼\n                                  ┌──────────────────────┐\n                                  │  Autocomplete Service │\n                                  │  (Stateless, scalable)│\n                                  └──────────┬────────────┘\n                                             │\n                                  ┌──────────▼────────────┐\n                                  │  Redis Cluster          │\n                                  │  ZREVRANGEBYSCORE       │\n                                  │  prefix:{query} → top 5 │\n                                  └────────────────────────┘\n```\n\n### Data Structure: Trie\nA Trie (prefix tree) enables O(L) lookup where L = query length:\n\n```\nTrie for [\"search\", \"searcher\", \"sea\", \"seal\"]:\n    root\n     └── s\n          └── e\n               └── a ← node (\"sea\", freq: 5200)\n                    ├── r\n                    │    └── c\n                    │         └── h ← node (\"search\", freq: 98000)\n                    │              └── e\n                    │                   └── r ← node (\"searcher\", freq: 1200)\n                    └── l ← node (\"seal\", freq: 3100)\n```\n\nEach Trie node stores: the top 5 completions for that prefix (pre-computed and cached). When traversing to \"sea\", the node already has `[\"search\": 98000, \"sea\": 5200, \"seal\": 3100, ...]` cached — no need to DFS further.\n\n### Redis Sorted Sets for Frequency Ranking\n```\nKey: prefix:sea\nZSET members: search_term → score (search frequency)\n\nZADD prefix:sea 98000 \"search\"\nZADD prefix:sea 5200  \"sea\"\nZADD prefix:sea 3100  \"seal\"\n\nZREVRANGE prefix:sea 0 4 WITHSCORES  ← top 5 results\n```\n\n### Update Pipeline: Keeping Suggestions Fresh\n```\nUser Searches → Kafka (search-events topic)\n                     │\n                     ├── Batch Aggregation (Spark/Flink, runs hourly)\n                     │   Updates Trie + Redis for all prefixes\n                     │\n                     └── Real-time Stream (Flink, windowed 5 min)\n                         Updates Redis for trending queries\n```\n\n### CDN Caching\n- Top 10,000 prefixes (\"th\", \"the\", \"wh\", etc.) account for ~80% of traffic.\n- Cache autocomplete responses at CDN with 60-second TTL.\n- Cache key: `autocomplete:{prefix}` → saves ~80% of backend requests.",
+      "interviewTip": "Lead with client-side debouncing — it shows you think about the full stack, not just the backend. Then explain why a raw Trie isn't enough at Google scale (100K QPS means the Trie must be in memory and responses pre-computed per node). The Redis sorted set approach demonstrates practical engineering over theoretical purity.",
+      "references": [
+        {
+          "title": "Alex Xu: Design Typeahead Suggestion",
+          "url": "https://bytebytego.com/courses/system-design-interview/design-a-search-autocomplete-system"
+        }
+      ],
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "sd-hld-005",
+      "title": "Design an E-Commerce Order System",
+      "category": "System Design",
+      "subcategory": "High Level Design",
+      "difficulty": "hard",
+      "tags": [
+        "e-commerce",
+        "saga",
+        "outbox-pattern",
+        "cqrs",
+        "order-lifecycle",
+        "idempotency"
+      ],
+      "summary": "Design an order management system with saga-based distributed transactions, outbox pattern for reliable events, and CQRS for read/write separation.",
+      "content": "## Design an E-Commerce Order System\n\n### Order Lifecycle State Machine\n\n```\n  PLACED ──► PAYMENT_PENDING ──► CONFIRMED ──► PROCESSING\n    │                │                              │\n    │         PAYMENT_FAILED                        ▼\n    │         (→ CANCELLED)              SHIPPED ──► DELIVERED\n    │                                       │\n    └──────────────────────────────────────► CANCELLED (any stage)\n                                             (compensation runs)\n```\n\n### Architecture\n\n```\n  Customer\n      │ POST /orders\n      ▼\n  ┌──────────────┐\n  │  Order API   │\n  │  Service     │──► Validates cart, stock, user auth\n  └──────┬───────┘\n         │ BEGIN TRANSACTION\n         ├── INSERT orders table (status: PLACED)\n         ├── INSERT outbox_events (OrderPlaced event)\n         │ COMMIT\n         │\n  ┌──────▼───────────────────────────────┐\n  │  Outbox → Kafka (via Debezium CDC)   │\n  └──────┬────────────────┬─────────────┘\n         │                │\n         ▼                ▼\n  ┌──────────────┐  ┌─────────────────┐\n  │  Inventory   │  │  Payment Service │\n  │  Service     │  │  (Stripe/Razorpay)│\n  └──────┬───────┘  └────────┬────────┘\n         │ Stock reserved     │ Payment charged\n         │                    │\n         └────────┬───────────┘\n                  │ Saga Orchestrator / Choreography\n                  ▼\n         ┌─────────────────┐\n         │  Shipping Svc   │\n         │  (FedEx/UPS API)│\n         └─────────────────┘\n```\n\n### Saga Pattern for Order Creation\nUsing **choreography-based saga** (event-driven, no central orchestrator):\n\n| Step | Command | Success Event | Failure → Compensation |\n|:---|:---|:---|:---|\n| 1 | Reserve Inventory | `InventoryReserved` | `InventoryFailed` → Cancel order |\n| 2 | Charge Payment | `PaymentCharged` | `PaymentFailed` → Release inventory |\n| 3 | Create Shipment | `ShipmentCreated` | `ShipmentFailed` → Refund payment + Release stock |\n\n### Idempotent Order Creation\nProblem: User double-taps \"Place Order\" or network retry fires twice.\n\n```sql\n-- Idempotency enforced at DB level:\nCREATE TABLE orders (\n    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n    idempotency_key TEXT UNIQUE NOT NULL,  -- client-generated UUID\n    user_id         BIGINT NOT NULL,\n    status          TEXT NOT NULL DEFAULT 'PLACED',\n    total_amount    DECIMAL(10,2),\n    created_at      TIMESTAMPTZ DEFAULT NOW()\n);\n\n-- Second request with same idempotency_key hits UNIQUE constraint\n-- → return existing order, no duplicate processing\n```\n\n### CQRS for Order History\n**Write side**: Normalized PostgreSQL tables optimized for ACID transactions.\n**Read side**: Denormalized Elasticsearch index optimized for:\n- Customer: \"my orders\" with full details\n- Ops team: search by product ID, status, date range\n- Analytics: aggregate revenue by SKU\n\n```\nPostgres (Write) ──► Debezium CDC ──► Kafka ──► Elasticsearch Consumer\n                                               (updates order-history index)\n```\n\n### Inventory Reservation: Soft vs Hard Lock\n- **Soft lock**: Decrement `available_stock` counter, increment `reserved_stock`. Fast. Reservation expires after 15 min if payment not completed.\n- **Hard lock**: `SELECT ... FOR UPDATE` row lock. Prevents overselling but blocks concurrent readers.\n- **Production choice**: Soft lock with scheduled cleanup job to release expired reservations.",
+      "interviewTip": "Interviewers look for the saga compensation chain — can you articulate what happens when step 3 (shipping) fails after step 2 (payment)? You need to refund AND release inventory. Also highlight idempotency at the DB layer (UNIQUE constraint on idempotency_key) — it is more reliable than application-level checks.",
+      "references": [
+        {
+          "title": "Microservices.io: Saga Pattern",
+          "url": "https://microservices.io/patterns/data/saga.html"
+        },
+        {
+          "title": "AWS: Implementing the Transactional Outbox Pattern",
+          "url": "https://aws.amazon.com/blogs/compute/implementing-the-transactional-outbox-pattern-with-amazon-eventbridge-pipes/"
+        }
+      ],
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "sd-store-001",
+      "title": "Database Sharding & Partitioning Strategies",
+      "category": "System Design",
+      "subcategory": "Data & Storage",
+      "difficulty": "hard",
+      "tags": [
+        "sharding",
+        "partitioning",
+        "consistent-hashing",
+        "vitess",
+        "cockroachdb",
+        "hotspot"
+      ],
+      "summary": "Deep dive into horizontal vs vertical partitioning, range/hash/directory sharding strategies, resharding with consistent hashing, and hotspot key mitigation.",
+      "content": "## Database Sharding & Partitioning Strategies\n\n### Why Shard?\n- A single MySQL server handles ~10,000 QPS and ~10 TB of data reliably.\n- At 100,000 QPS or 100 TB, you need horizontal scaling.\n- **Vertical scaling** (bigger machine) hits hardware limits and creates a single point of failure.\n\n### Vertical Partitioning (Simpler — Do This First)\nSplit one wide table into multiple narrower tables, or split by feature:\n\n```\nBefore: users(id, name, email, bio, avatar_url, settings_json, last_login)\n\nAfter:\n  users_core(id, name, email)           ← hot, read on every request\n  users_profile(user_id, bio, avatar)   ← warm, read on profile page\n  users_settings(user_id, settings)     ← cold, read rarely\n```\n\n### Horizontal Partitioning (Sharding) Strategies\n\n#### 1. Range-Based Sharding\n```\nShard 1: user_id 1 – 1,000,000\nShard 2: user_id 1,000,001 – 2,000,000\nShard 3: user_id 2,000,001 – 3,000,000\n```\n**Pros**: Simple, efficient range queries (all users in a region on same shard).\n**Cons**: Hotspot! New users always write to the last shard. Time-series data overwhelms the current-time shard.\n\n#### 2. Hash-Based Sharding\n```\nshardIndex = hash(user_id) % numberOfShards\n```\n**Pros**: Uniform distribution. No hotspots for sequential IDs.\n**Cons**: Adding a shard requires rehashing ALL keys → massive data migration. Range queries scatter across all shards.\n\n#### 3. Consistent Hashing (Best for Dynamic Clusters)\nMap both shards and keys onto a hash ring. Adding a shard only moves ~K/N keys (see sd-dist-002).\n- Used by: Cassandra, DynamoDB, Redis Cluster.\n\n#### 4. Directory-Based Sharding\nMaintain a **shard map** lookup table:\n```\nuser_id → shard_id\n42      → shard_3\n99      → shard_1\n```\n**Pros**: Maximum flexibility. Can move any key to any shard without changing the hash function.\n**Cons**: The directory itself becomes a bottleneck and single point of failure. Must be cached aggressively.\n\n### Cross-Shard Joins — The Major Pain Point\n```sql\n-- This query spans 3 shards — IMPOSSIBLE to run on a single DB node:\nSELECT o.*, u.name\nFROM orders o JOIN users u ON o.user_id = u.id\nWHERE o.created_at > '2024-01-01';\n```\n\n**Solutions**:\n1. **Denormalize**: Embed `user_name` in the `orders` table at write time.\n2. **Scatter-Gather**: Query all shards in parallel, aggregate results in application layer.\n3. **Co-location**: Use the same shard key for related data (`user_id` as shard key for both `users` and `orders`).\n\n### Hotspot Key Problem\nA viral tweet (tweet_id = 12345) gets 10M reads/hour → all traffic hammers Shard 2.\n\n**Solutions**:\n- **Key salting**: Append a random suffix (`tweet_12345_1`, `tweet_12345_2`) and distribute reads across multiple shards. Reads aggregate from all salted keys.\n- **Adaptive sharding**: Monitor QPS per shard. Automatically split overloaded shards.\n\n### Vitess & CockroachDB\n- **Vitess** (used by YouTube, Slack): Middleware layer for MySQL sharding. Handles routing, resharding, connection pooling transparently. SQL-compatible.\n- **CockroachDB**: Distributed SQL database with automatic range-based sharding and rebalancing. Geo-partitioning support. ACID at global scale using Raft consensus per range.",
+      "interviewTip": "Interviewers want you to acknowledge cross-shard joins as the primary sharding pain point, then show a concrete mitigation strategy. Also mention Vitess if asked about sharding MySQL at scale — it shows real-world awareness beyond theoretical approaches.",
+      "references": [
+        {
+          "title": "Vitess: Sharding MySQL at YouTube Scale",
+          "url": "https://vitess.io/docs/overview/architecture/"
+        },
+        {
+          "title": "CockroachDB: How We Built a Distributed Database",
+          "url": "https://www.cockroachlabs.com/blog/how-we-built-cockroachdb/"
+        }
+      ],
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "sd-store-002",
+      "title": "Read Replicas, Replication Lag & Consistency",
+      "category": "System Design",
+      "subcategory": "Data & Storage",
+      "difficulty": "medium",
+      "tags": [
+        "replication",
+        "read-replica",
+        "lag",
+        "consistency",
+        "crdt",
+        "multi-leader"
+      ],
+      "summary": "Understand leader-follower replication, synchronous vs asynchronous trade-offs, replication lag impact, read-your-writes consistency, and multi-leader conflict resolution.",
+      "content": "## Read Replicas, Replication Lag & Consistency\n\n### Leader-Follower (Primary-Replica) Replication\n```\n  Write ──► Leader (Primary)\n                │\n                ├── Async replication ──► Replica 1 (Read)\n                ├── Async replication ──► Replica 2 (Read)\n                └── Async replication ──► Replica 3 (Read, DR)\n\nClient Reads ──► Replica 1, 2 (80% of reads go here)\nClient Writes ──► Leader only\n```\n\nTypical read/write ratio in web apps: **80:20**. Adding read replicas scales read throughput linearly.\n\n### Synchronous vs Asynchronous Replication\n\n| | Synchronous | Asynchronous |\n|:---|:---|:---|\n| **Durability** | Highest — replica confirmed before leader ACKs client | Lower — leader ACKs before replica confirmed |\n| **Write Latency** | Higher — waits for replica ACK across network (~5ms) | Lower — fire-and-forget |\n| **Replication Lag** | 0ms (by definition) | Typically 10ms–10s; can spike to hours |\n| **Availability** | Lower — write fails if replica is down | Higher |\n| **Used by** | PostgreSQL synchronous_commit=on, MySQL semi-sync | PostgreSQL async (default), MySQL async |\n\n### Replication Lag: The Hidden Problem\nAsync replication creates a window where replicas serve **stale data**.\n\n**Scenario**: User changes their username → write goes to leader. User immediately refreshes profile page → read goes to replica → sees old username. **Confusing UX!**\n\n### Read-Your-Writes Consistency\nGarantee: A user always reads their own most recent writes.\n\n**Implementation Options**:\n1. **Route writes + subsequent reads to leader** for 1 second after a write.\n2. **Track last-write timestamp** per user. If replica's replication position is behind that timestamp, redirect to leader.\n3. **Sticky sessions**: Pin a user's reads to one replica; all their writes go to the same logical connection path.\n\n### Multi-Leader Replication\nUsed for: Multi-datacenter deployments, offline-capable apps (mobile sync), collaborative editing.\n\n```\n  Datacenter US          Datacenter EU\n  ┌───────────┐          ┌───────────┐\n  │ Leader A  │◄────────►│ Leader B  │\n  └─────┬─────┘          └─────┬─────┘\n        │                      │\n    Replicas               Replicas\n```\n\n**Conflict Problem**: User A and User B simultaneously update the same record in different datacenters. Which write wins?\n\n**Conflict Resolution Strategies**:\n1. **Last-Write-Wins (LWW)**: Highest timestamp wins. Simple but loses data — concurrent writes are silently discarded.\n2. **Causality tracking**: Use vector clocks to detect concurrent vs. sequential writes. Concurrent conflicts surfaced to application.\n3. **CRDTs (Conflict-Free Replicated Data Types)**: Data structures mathematically guaranteed to merge without conflicts. Examples: counters (G-Counter), sets (OR-Set), text (LSEQ for collaborative editors like Figma).\n\n### Quorum Reads & Writes (Cassandra/DynamoDB)\nWith N replicas, configure:\n- W (write quorum): Writes must succeed on W nodes.\n- R (read quorum): Reads must be confirmed by R nodes.\n- **Strong consistency**: W + R > N (e.g., N=3, W=2, R=2 → W+R=4 > 3)\n- **Availability-optimized**: W=1, R=1 (fastest, eventual consistency)",
+      "interviewTip": "Read-your-writes is the most common replication lag question in interviews. Explain the timestamp-based routing approach — it is more general than sticky sessions (which break with load balancer changes). For multi-leader, always mention CRDTs — they show awareness of modern distributed systems solutions used by Figma and Google Docs.",
+      "references": [
+        {
+          "title": "Martin Kleppmann: DDIA — Replication Chapter",
+          "url": "https://dataintensive.net/"
+        },
+        {
+          "title": "PostgreSQL: Replication Documentation",
+          "url": "https://www.postgresql.org/docs/current/warm-standby.html"
+        }
+      ],
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "sd-dist-003",
+      "title": "Distributed Locking: Redis vs ZooKeeper vs Database",
+      "category": "System Design",
+      "subcategory": "Distributed Systems",
+      "difficulty": "hard",
+      "tags": [
+        "distributed-locking",
+        "redis",
+        "redlock",
+        "zookeeper",
+        "fencing-token",
+        "clock-skew"
+      ],
+      "summary": "Compare Redis Redlock, ZooKeeper ephemeral nodes, and database advisory locks for distributed mutual exclusion, including fencing tokens for clock skew safety.",
+      "content": "## Distributed Locking\n\n### Why Distributed Locks Are Hard\nA single-process mutex (`synchronized`, `std::mutex`) fails in distributed systems because:\n- Process A acquires lock, enters a 30-second GC pause, lock TTL expires.\n- Process B acquires the same lock (TTL expired).\n- Process A resumes from GC pause, still thinks it holds the lock.\n- **Both A and B are now in the critical section simultaneously!**\n\n### Option 1: Redis SETNX + Expire (Simple)\n```\nSET lock:{resource} {unique_value} NX PX 30000\n```\n- `NX`: Only set if Not eXists (atomic acquire).\n- `PX 30000`: Auto-expire in 30 seconds (prevents deadlock on crash).\n- `unique_value`: UUID per lock holder (prevents releasing another holder's lock).\n\n**Release** (must be atomic — use Lua script):\n```lua\nif redis.call('GET', KEYS[1]) == ARGV[1] then\n    return redis.call('DEL', KEYS[1])\nelse\n    return 0\nend\n```\n\n**Single Redis node weakness**: If Redis crashes before TTL expires, the lock is lost and not recoverable without waiting for TTL.\n\n### Option 2: Redlock (Redis Distributed Lock Algorithm)\nAcquire lock on N independent Redis masters (typically N=5). Lock is acquired if majority (⌈N/2⌉ + 1 = 3) nodes confirm within a validity time.\n\n**Criticized by Martin Kleppmann**: Redlock provides false safety guarantees under clock skew and GC pauses. If a process acquires Redlock but pauses for GC, the lock expires on Redis nodes while the process still thinks it holds the lock.\n\n### Option 3: ZooKeeper Ephemeral Nodes (Stronger Guarantees)\n```\nClient A creates: /locks/resource (EPHEMERAL node)\n\nIf Client A crashes → ZooKeeper session expires → ephemeral node\nautomatically deleted → other clients notified via watch.\n```\n\n**Pros**: Session-based locking — ZooKeeper automatically releases the lock if the client's session times out (no GC pause problem with TTL). Uses **Zab consensus protocol** for strong consistency.\n\n**Cons**: Higher operational complexity. Requires running ZooKeeper cluster. Higher latency (consensus round-trips).\n\n### Option 4: Database Advisory Locks (PostgreSQL)\n```sql\n-- Acquire lock (non-blocking variant: pg_try_advisory_lock)\nSELECT pg_advisory_lock(42);  -- 42 = resource ID\n-- ... critical section ...\nSELECT pg_advisory_unlock(42);\n```\n\n**Pros**: Reuses existing infrastructure. Automatically released when session ends.\n**Cons**: Ties critical section to DB connection lifecycle. DB becomes a coordination bottleneck.\n\n### Fencing Tokens — The Real Solution to Clock Skew\n\n```\n  Client A acquires lock → receives fencing token: 33\n  Client A enters GC pause → lock TTL expires\n  Client B acquires lock → receives fencing token: 34\n  Client B writes to storage service with token: 34\n  Client A resumes → tries to write with token: 33\n  Storage service rejects: 33 < 34 (stale token!) ✓\n```\n\nThe storage service (database, file system) enforces monotonically increasing fencing tokens. Any write with a token ≤ the last accepted token is rejected as stale — regardless of what the client believes.\n\n### Decision Framework\n| Need | Use |\n|:---|:---|\n| Simple, high-throughput, tolerate rare lock safety violations | Redis SETNX |\n| Strong safety guarantee, session-based | ZooKeeper / etcd |\n| Existing DB, low lock contention | PostgreSQL advisory locks |\n| Any distributed lock | Pair with fencing tokens on the resource side |",
+      "interviewTip": "Mention fencing tokens — this is the advanced answer that separates senior engineers. Most candidates describe Redis SETNX and stop there. Acknowledging the GC pause / clock skew failure mode and how fencing tokens mitigate it shows deep distributed systems thinking.",
+      "references": [
+        {
+          "title": "Martin Kleppmann: How to do distributed locking",
+          "url": "https://martin.kleppmann.com/2016/02/08/how-to-do-distributed-locking.html"
+        },
+        {
+          "title": "Redis: Distributed Locks with Redlock",
+          "url": "https://redis.io/docs/manual/patterns/distributed-locks/"
+        }
+      ],
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "sd-dist-004",
+      "title": "Leader Election & Consensus: The Raft Algorithm",
+      "category": "System Design",
+      "subcategory": "Distributed Systems",
+      "difficulty": "expert",
+      "tags": [
+        "raft",
+        "consensus",
+        "leader-election",
+        "split-brain",
+        "etcd",
+        "kafka-kraft"
+      ],
+      "summary": "Understand the split-brain problem, Raft consensus algorithm terms and leader election, log replication safety, and where Raft is used in production systems.",
+      "content": "## Leader Election & Consensus: The Raft Algorithm\n\n### The Split-Brain Problem\nIn a distributed cluster of 3 nodes, if the network partitions:\n```\n  [Node A] ──────── [Node B]        [Node C]\n  (was leader)  PARTITION!       (thinks it's leader now)\n```\nBoth A and C believe they are the leader. Both accept writes. When the partition heals, the cluster has two divergent histories — **split-brain**. Consensus algorithms prevent this.\n\n### Why Paxos Is Hard\nPaxos (Leslie Lamport, 1989) is the theoretical foundation for distributed consensus. In practice it is notoriously difficult to implement correctly:\n- Multiple rounds of prepare/promise/accept/commit messages.\n- Doesn't specify leader election or log replication (Multi-Paxos must be engineered on top).\n- Raft was designed explicitly to be **understandable** — it decomposes consensus into leader election, log replication, and safety.\n\n### Raft Fundamentals\n\n**Terms**: Raft divides time into logical **terms** (monotonically increasing integers). Each term begins with an election. If a candidate wins, it serves as leader for the rest of the term.\n\n**Server States**:\n```\n  FOLLOWER ──(election timeout)──► CANDIDATE ──(majority votes)──► LEADER\n      ▲                                │                               │\n      └────────────(discover current leader)──────────────────────────┘\n```\n\n### Leader Election\n1. Followers wait for a heartbeat from the leader (150-300ms election timeout).\n2. If no heartbeat received, follower converts to **candidate**, increments current term, votes for itself, sends `RequestVote` RPCs to all other nodes.\n3. A server grants a vote if: (a) candidate's term ≥ own term, (b) candidate's log is at least as up-to-date as own log, (c) haven't voted for another candidate this term.\n4. Candidate receiving votes from **majority** (⌈N/2⌉ + 1) becomes leader.\n5. **Split vote**: If two candidates tie (e.g., 2 nodes in 4-node cluster each get 2 votes), both timeout randomly and restart election with a new term. Randomized timeouts prevent repeated ties.\n\n### Log Replication\n```\n  Client Request ──► Leader\n  Leader:\n    1. Appends entry to own log (uncommitted)\n    2. Sends AppendEntries RPC to all followers\n    3. Waits for majority ACK\n    4. Commits entry (applies to state machine)\n    5. Sends committed status in next heartbeat → followers commit\n```\n\n### Safety Property\nRaft guarantees: **If a log entry is committed, it will be present in the logs of all future leaders.**\n\nThis is enforced by the vote restriction: A candidate can only be elected if its log is at least as up-to-date as any log in the majority.\n\n### Raft in Production\n| System | Use of Raft |\n|:---|:---|\n| **etcd** | Kubernetes config store; uses Raft for all key-value replication |\n| **Kafka KRaft** | Replaces ZooKeeper in Kafka 3.x; Raft consensus for broker metadata |\n| **CockroachDB** | One Raft group per data range (~64MB ranges) |\n| **TiDB** | Multi-Raft across TiKV storage nodes |\n| **Consul** | Service mesh consensus for service discovery |\n\n### Raft vs ZooKeeper (Zab Protocol)\n- Both solve consensus. Zab (ZooKeeper Atomic Broadcast) is similar to Raft but was designed before Raft.\n- **Difference**: Zab uses a primary-backup model. Raft is arguably more composable and easier to implement correctly.\n- **Trend**: Modern systems (Kafka, etcd) prefer Raft over ZooKeeper for embedded consensus.",
+      "interviewTip": "Interviewers rarely expect you to recite Raft in full detail but want to see you understand: (1) why split-brain is dangerous, (2) that majority quorum prevents split-brain (a minority partition cannot elect a leader), and (3) real systems using it (etcd, Kafka KRaft). The majority quorum insight — that two disjoint majorities cannot both exist in a cluster — is the key safety intuition.",
+      "references": [
+        {
+          "title": "Raft Consensus Algorithm (Ongaro & Ousterhout)",
+          "url": "https://raft.github.io/"
+        },
+        {
+          "title": "The Secret Lives of Data: Raft Visualization",
+          "url": "https://thesecretlivesofdata.com/raft/"
+        }
+      ],
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "sd-scale-003",
+      "title": "Caching Architecture Deep Dive",
+      "category": "System Design",
+      "subcategory": "Scalability & Reliability",
+      "difficulty": "medium",
+      "tags": [
+        "caching",
+        "redis",
+        "cdn",
+        "cache-stampede",
+        "eviction",
+        "write-through"
+      ],
+      "summary": "Master cache-aside vs write-through vs write-behind strategies, LRU/LFU eviction, cache stampede solutions, CDN caching, and L1/L2 cache hierarchies.",
+      "content": "## Caching Architecture Deep Dive\n\n### Caching Strategies\n\n#### Cache-Aside (Lazy Loading) — Most Common\n```\nRead:\n  1. Check cache → HIT: return value\n  2. MISS: read from DB → write to cache → return value\n\nWrite:\n  1. Write to DB\n  2. Invalidate (DELETE) cache entry  ← not update! prevents race conditions\n```\n**Pros**: Only requested data is cached. Cache failures degrade gracefully (fallback to DB).\n**Cons**: Cache miss = 3 trips (cache read + DB read + cache write). Initial cache is cold (thundering herd on startup).\n\n#### Write-Through — Consistent\n```\nWrite:\n  1. Write to cache\n  2. Write to DB (synchronously)\n  → Both always in sync\n```\n**Pros**: Cache always has fresh data. Reads are always fast.\n**Cons**: Write latency = cache write + DB write. Cache fills with data that may never be read.\n\n#### Write-Behind (Write-Back) — High Write Throughput\n```\nWrite:\n  1. Write to cache (fast, returns immediately to client)\n  2. Async: cache flushes to DB in batches\n```\n**Pros**: Write latency = only cache write. Excellent for write-heavy workloads.\n**Cons**: **Risk of data loss** if cache node crashes before flushing to DB. Complexity.\n\n### Eviction Policies\n\n| Policy | How It Works | Best For |\n|:---|:---|:---|\n| **LRU** (Least Recently Used) | Evict item not accessed for longest time | General purpose web caches |\n| **LFU** (Least Frequently Used) | Evict item with fewest accesses | Popularity-skewed data (news, products) |\n| **TTL** | Evict after fixed time regardless of access | Time-sensitive data (session tokens, OTPs) |\n| **Random** | Evict random item | Rarely used; baseline comparison |\n\n### Cache Stampede / Thundering Herd\nWhen a popular cache key expires, thousands of concurrent requests all get a cache MISS and simultaneously query the DB.\n\n```\n  Time 0: key \"top_products\" expires\n  Time 0-100ms: 10,000 requests hit cache MISS\n  Time 0-100ms: 10,000 simultaneous DB queries ──► DB overwhelmed!\n```\n\n**Solution 1 — Mutex / Probabilistic Lock**:\n```python\ndef get_cached(key):\n    value = cache.get(key)\n    if value is None:\n        # Only one request rebuilds the cache\n        with distributed_lock(key, timeout=5):\n            value = cache.get(key)  # double-check after acquiring lock\n            if value is None:\n                value = db.query(key)\n                cache.set(key, value, ttl=300)\n    return value\n```\n\n**Solution 2 — Probabilistic Early Expiry (PER)**:\nInstead of a hard TTL, recalculate the value with increasing probability as expiry approaches:\n```python\n# XFetch algorithm — recalculate before TTL expires\nif current_time - beta * delta * log(random()) >= expiry_time:\n    recompute_and_cache(key)\n```\n\n**Solution 3 — Request Coalescing (Dogpile Prevention)**:\nQueue all incoming requests for an expired key. Only the first request recomputes; all others wait and receive the same result.\n\n### L1 / L2 Cache Hierarchy\n```\n  Request ──► L1 Cache (In-Process, e.g. Caffeine/Guava)\n                  │ MISS\n                  ▼\n              L2 Cache (Distributed Redis Cluster)\n                  │ MISS\n                  ▼\n              Database (PostgreSQL / MySQL)\n```\n- **L1 (local memory)**: Sub-millisecond, limited size (128MB–1GB), process-local.\n- **L2 (Redis)**: ~1ms, terabytes of capacity, shared across all service instances.\n\n### CDN Caching\n- Static assets: JS, CSS, images — cache at CDN edge (1 year TTL via content-hash filenames).\n- API responses: Cache GET responses at CDN for 60 seconds (e.g., product listings). Use `Cache-Control: public, max-age=60`.\n- **Cache invalidation**: Use CloudFront invalidation API or Surrogate-Key based invalidation (Fastly, Varnish) to purge specific content without waiting for TTL.",
+      "interviewTip": "The cache stampede question is a common follow-up after you propose caching. Describe at least two solutions. The mutex approach is the simplest to explain; probabilistic early expiry shows depth. Always mention that cache invalidation (not just cache filling) is the hard problem — Phil Karlton's famous quote: 'There are only two hard things in Computer Science: cache invalidation and naming things.'",
+      "references": [
+        {
+          "title": "Redis Documentation: Cache Patterns",
+          "url": "https://redis.io/docs/manual/patterns/"
+        },
+        {
+          "title": "Cloudflare: CDN Caching Strategy",
+          "url": "https://developers.cloudflare.com/cache/concepts/cache-control/"
+        }
+      ],
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "sd-scale-004",
+      "title": "API Design Best Practices",
+      "category": "System Design",
+      "subcategory": "Scalability & Reliability",
+      "difficulty": "medium",
+      "tags": [
+        "api-design",
+        "rest",
+        "versioning",
+        "pagination",
+        "idempotency",
+        "hateoas"
+      ],
+      "summary": "REST maturity model, idempotency keys, API versioning strategies, cursor vs offset pagination, and backward compatibility rules for production APIs.",
+      "content": "## API Design Best Practices\n\n### REST Maturity Model (Richardson)\n\n| Level | Description | Example |\n|:---|:---|:---|\n| **0** | Single URI, POST everything | `POST /api {action: \"getUser\"}` |\n| **1** | Multiple resources, wrong verbs | `POST /users/42/get` |\n| **2** | Proper HTTP verbs + status codes | `GET /users/42` → 200, `POST /users` → 201 |\n| **3** | HATEOAS — responses include links | Response includes `{_links: {self, next, update}}` |\n\nMost production APIs target **Level 2**. Level 3 (HATEOAS) is theoretically ideal but adds response payload overhead and is rarely implemented purely.\n\n### HTTP Verb Semantics\n```\nGET    /orders          → List orders (safe, idempotent)\nGET    /orders/42       → Get specific order (safe, idempotent)\nPOST   /orders          → Create order (NOT idempotent by default)\nPUT    /orders/42       → Full replacement (idempotent)\nPATCH  /orders/42       → Partial update (idempotent if implemented correctly)\nDELETE /orders/42       → Delete (idempotent)\n```\n\n### Making POST Idempotent: Idempotency Keys\n```http\nPOST /payments\nIdempotency-Key: client-uuid-550e8400-e29b\nContent-Type: application/json\n\n{\"amount\": 99.99, \"currency\": \"USD\"}\n```\nServer stores `Idempotency-Key → response`. Retries return cached response without re-processing (Stripe uses 24-hour retention).\n\n### API Versioning Strategies\n\n| Strategy | Example | Pros | Cons |\n|:---|:---|:---|:---|\n| **URI Versioning** | `/api/v2/users` | Explicit, easy to route | URL changes, caches must be per-version |\n| **Header Versioning** | `Accept: application/vnd.api+json;version=2` | Clean URLs | Harder to test in browser |\n| **Query Param** | `/api/users?version=2` | Easy to test | Pollutes query string, caching issues |\n\n**Recommendation**: URI versioning for public APIs. Header versioning for internal APIs.\n\n### Pagination: Cursor vs Offset\n\n#### Offset Pagination\n```\nGET /orders?page=5&limit=20\nSQL: SELECT * FROM orders LIMIT 20 OFFSET 100\n```\n**Pros**: Jump to any page, simple to implement.\n**Cons**: If items are inserted/deleted between pages, items can be skipped or duplicated. Performance degrades with high OFFSET (DB scans 100 rows to skip them).\n\n#### Cursor Pagination (Preferred for Large Datasets)\n```\nGET /orders?cursor=eyJpZCI6MTAwfQ&limit=20\n  (cursor decodes to: {\"id\": 100, \"created_at\": \"2024-01-15\"})\nSQL: SELECT * FROM orders WHERE id > 100 ORDER BY id LIMIT 20\n```\n**Pros**: O(1) regardless of dataset size. Stable — no skip/duplicate issues. Works with real-time feeds.\n**Cons**: Cannot jump to arbitrary pages. Cursor must encode sort key(s).\n\n### Rate Limiting Headers\n```http\nHTTP/1.1 200 OK\nX-RateLimit-Limit: 100\nX-RateLimit-Remaining: 23\nX-RateLimit-Reset: 1729600000\nRetry-After: 45   (only on 429 responses)\n```\n\n### Backward Compatibility Rules\n**NEVER do these in a new version (breaking changes)**:\n- Remove a field from response\n- Change a field's data type\n- Change HTTP method or URL path\n- Add a required request field without a default\n\n**SAFE changes** (non-breaking):\n- Add new optional response fields\n- Add new optional request parameters\n- Add new endpoints\n- Add new enum values (clients must handle unknown values)\n\n### Bulk Operations\nAvoid N+1 API calls with batch endpoints:\n```\nPOST /users/batch-get\n{\"ids\": [\"u1\", \"u2\", \"u3\", \"u4\"]}\n\nDELETE /orders/batch\n{\"ids\": [\"ord_1\", \"ord_2\", \"ord_3\"]}\n```",
+      "interviewTip": "Cursor pagination is the most common API design follow-up in system design interviews. Show you understand WHY offset pagination fails at scale (OFFSET 10000000 in SQL is extremely slow) and WHY cursor pagination fixes it (seeks directly via index). Mention that cursors should be opaque base64-encoded tokens to decouple the pagination key from the internal DB schema.",
+      "references": [
+        {
+          "title": "Stripe API Design Principles",
+          "url": "https://stripe.com/docs/api"
+        },
+        {
+          "title": "GitHub REST API Pagination",
+          "url": "https://docs.github.com/en/rest/guides/using-pagination-in-the-rest-api"
+        }
+      ],
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "sd-scale-005",
+      "title": "Message Queue Deep Dive: Kafka vs RabbitMQ vs SQS",
+      "category": "System Design",
+      "subcategory": "Scalability & Reliability",
+      "difficulty": "hard",
+      "tags": [
+        "kafka",
+        "rabbitmq",
+        "sqs",
+        "message-queue",
+        "event-streaming",
+        "exactly-once"
+      ],
+      "summary": "Compare Kafka, RabbitMQ, and SQS on delivery guarantees, ordering, consumer models, and when to use each for event streaming vs task queues.",
+      "content": "## Message Queue Deep Dive: Kafka vs RabbitMQ vs SQS\n\n### Delivery Guarantees\n\n| Guarantee | Description | Requires |\n|:---|:---|:---|\n| **At-Most-Once** | Messages may be lost, never duplicated | Fire-and-forget (no ACK) |\n| **At-Least-Once** | No loss, but duplicates possible | ACK after processing |\n| **Exactly-Once** | No loss, no duplicates | Idempotent consumers + transactional producers |\n\nTrue exactly-once is expensive. **At-least-once + idempotent consumers** is the industry standard.\n\n### Apache Kafka\n\n```\nProducer ──► Kafka Broker Cluster\n               ┌─────────────────────────────┐\n               │  Topic: order-events         │\n               │  ┌──────┬──────┬──────┐     │\n               │  │ P0   │ P1   │ P2   │     │  ← Partitions (parallelism)\n               │  │ off0 │ off0 │ off0 │     │\n               │  │ off1 │ off1 │ off1 │     │\n               │  └──────┴──────┴──────┘     │\n               └──────────────────────────────┘\n                          │\n               Consumer Group A (Inventory Svc)\n               Consumer Group B (Analytics Svc)\n               (each group gets ALL messages — independent)\n```\n\n**Key Properties**:\n- **Partitioned log**: Messages appended to immutable partitions. Consumers track their own **offset** (position in log).\n- **Durable replay**: Messages retained for configurable duration (default 7 days). New consumers can replay from the beginning.\n- **Pull model**: Consumers pull at their own pace. No message is lost if a consumer is slow.\n- **Ordering**: Guaranteed within a partition, not across partitions. Use a consistent partition key (`user_id`, `order_id`) to ensure related events land on the same partition.\n- **Throughput**: Millions of messages/second per cluster.\n- **Exactly-once**: Kafka Transactions API (producer + consumer in the same Kafka transaction).\n\n### RabbitMQ\n\n```\nProducer ──► Exchange (routing rules)\n                │\n                ├── Direct Exchange ──► Queue A ──► Consumer 1\n                ├── Fanout Exchange ──► Queue B ──► Consumer 2\n                └── Topic Exchange  ──► Queue C ──► Consumer 3\n                       (routing by pattern: orders.#, *.critical)\n```\n\n**Key Properties**:\n- **Push model**: Broker pushes messages to consumers. Good for low-latency delivery.\n- **Smart broker, dumb consumer**: Routing logic lives in the exchange (direct, fanout, topic, headers).\n- **Message TTL & Dead Letter Exchange**: Expired/failed messages route to a DLX for inspection.\n- **No replay**: Once consumed and ACKed, the message is deleted. Not designed for event log replay.\n- **Throughput**: ~50,000 messages/sec per node (much lower than Kafka).\n- **Best for**: Task queues, RPC patterns, job distribution with complex routing.\n\n### Amazon SQS\n\n**Key Properties**:\n- **Fully managed**: No infrastructure to run.\n- **Standard Queue**: At-least-once, best-effort ordering. High throughput (unlimited).\n- **FIFO Queue**: Exactly-once processing, strict ordering. 3,000 msg/sec throughput limit.\n- **Visibility Timeout**: After a consumer receives a message, it becomes invisible to others for a timeout period (e.g., 30s). If not deleted (ACKed), it reappears for another consumer.\n- **DLQ**: Messages that fail processing N times are moved to a Dead Letter Queue.\n\n### When to Use Which\n\n| Scenario | Use |\n|:---|:---|\n| Event streaming, audit log, replay needed | **Kafka** |\n| Multiple independent consumers (analytics + inventory + billing) | **Kafka** (consumer groups) |\n| Complex routing, RPC, task queues, low volume | **RabbitMQ** |\n| Simple async decoupling, AWS-native, managed ops | **SQS** |\n| Ordered processing within a key | **Kafka** (partition key) |\n| Serverless consumers (AWS Lambda) | **SQS** (native integration) |\n\n### FIFO vs Partitioned Ordering\n- **Kafka**: Order guaranteed per partition. Scale = number of partitions = number of parallel consumers.\n- **SQS FIFO**: Global ordering with message groups. 3K msg/sec max — doesn't scale horizontally for high-throughput ordered processing.\n- **RabbitMQ**: Single queue = FIFO ordering. Multiple consumers on one queue = messages distributed out-of-order across consumers.",
+      "interviewTip": "The key differentiator between Kafka and RabbitMQ is: Kafka is a durable, replayable event log; RabbitMQ is a smart message broker optimized for routing and deletion after consumption. Ask yourself: Does the consumer need to replay history? Kafka. Does the message need complex routing or RPC? RabbitMQ. Is this AWS and you want zero ops? SQS.",
+      "references": [
+        {
+          "title": "Confluent: Apache Kafka Documentation",
+          "url": "https://docs.confluent.io/kafka/introduction.html"
+        },
+        {
+          "title": "RabbitMQ: AMQP Concepts",
+          "url": "https://www.rabbitmq.com/tutorials/amqp-concepts.html"
+        }
+      ],
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "sd-hld-006",
+      "title": "Design a Distributed Job Scheduler",
+      "category": "System Design",
+      "subcategory": "High Level Design",
+      "difficulty": "expert",
+      "tags": [
+        "job-scheduler",
+        "temporal",
+        "quartz",
+        "cron",
+        "exactly-once",
+        "workflow"
+      ],
+      "summary": "Design a distributed job scheduler like Quartz/Temporal with exactly-once execution, leader election, idempotent job handlers, and workflow orchestration.",
+      "content": "## Design a Distributed Job Scheduler\n\n### Requirements\n- Schedule jobs with cron expressions (e.g., `0 9 * * MON` = Monday 9am)\n- Guarantee each job fires **exactly once** even if scheduler nodes crash\n- Retry failed jobs with exponential backoff\n- Long-running workflows with multiple steps (Temporal-style)\n- Scale to 100K registered jobs, 10K concurrent executions\n\n### Architecture\n\n```\n  ┌──────────────────────────────────────────────────────┐\n  │               Scheduler Cluster (3 nodes)             │\n  │                                                        │\n  │   ┌───────────┐   ┌───────────┐   ┌───────────┐      │\n  │   │ Scheduler │   │ Scheduler │   │ Scheduler │      │\n  │   │ Node 1    │   │ Node 2    │   │ Node 3    │      │\n  │   │ (LEADER)  │   │ (FOLLOWER)│   │ (FOLLOWER)│      │\n  │   └─────┬─────┘   └───────────┘   └───────────┘      │\n  │         │ Leader Election via etcd/ZooKeeper           │\n  └─────────┼────────────────────────────────────────────-┘\n            │\n      ┌─────▼──────────────────────────────┐\n      │  Job Database (PostgreSQL)          │\n      │  ┌──────────────────────────────┐  │\n      │  │ jobs: id, cron, next_run_at, │  │\n      │  │        status, last_run_at   │  │\n      │  └──────────────────────────────┘  │\n      └────────────────┬───────────────────┘\n                       │ next_run_at < NOW()\n                       ▼\n      ┌────────────────────────────────────┐\n      │  Job Queue (Kafka / Redis Streams)  │\n      └────────────────┬───────────────────┘\n                       │\n      ┌────────────────▼───────────────────┐\n      │  Worker Pool (auto-scaled)          │\n      │  Worker 1, Worker 2, ... Worker N  │\n      └────────────────────────────────────┘\n```\n\n### Exactly-Once Job Execution\n\n**Problem**: Leader crashes after picking a job but before marking it as running. On restart, the job gets picked again and runs twice.\n\n**Solution — Optimistic Locking with Version**:\n```sql\n-- Leader atomically claims the job:\nUPDATE jobs\nSET status = 'RUNNING',\n    locked_by = 'scheduler-node-1',\n    locked_until = NOW() + INTERVAL '5 minutes',\n    version = version + 1\nWHERE id = 42\n  AND status = 'PENDING'\n  AND version = 7;   ← only one node wins the CAS\n-- If 0 rows updated: another node claimed it first → skip\n```\n\nSince only one `UPDATE` will match `AND version = 7`, exactly one scheduler node claims the job. This is a compare-and-swap (CAS) operation.\n\n### Leader Election for the Scheduler\nOnly the leader node polls the job table and fires new jobs. Followers stand by.\n\n- Use **etcd** or **ZooKeeper** for leader election.\n- Leader holds a lease (TTL = 30s) and renews it every 10s.\n- If leader crashes, lease expires → election → new leader in < 30s.\n- No jobs fire during the leader gap — acceptable for most use cases.\n\n### Idempotent Job Handlers\nEven with optimistic locking, at-least-once delivery can happen (leader claims job, fires it, crashes before marking COMPLETED → job refired after lock expires).\n\n**Job handler must be idempotent**:\n```python\ndef send_weekly_report(job_id: str, week: str):\n    # Check if already done (idempotency check)\n    if ReportLog.exists(job_id=job_id, week=week):\n        return  # Already sent, skip\n    \n    report = generate_report(week)\n    email_service.send(report)\n    \n    # Record completion atomically\n    ReportLog.create(job_id=job_id, week=week, sent_at=now())\n```\n\n### Retry with Exponential Backoff\n```\nAttempt 1: Run job → fails → wait 30s\nAttempt 2: Run job → fails → wait 60s\nAttempt 3: Run job → fails → wait 120s\n...\nAttempt 5: Run job → fails → move to DEAD_LETTER queue → alert\n\nFormula: wait = base_delay * 2^attempt + jitter\nJitter prevents retry storms (all failed jobs retrying simultaneously).\n```\n\n### Workflow Orchestration: Temporal's Approach\nFor multi-step workflows (e.g., onboarding: create account → send email → provision workspace → notify Slack):\n\n- **Temporal** stores the workflow execution state as an **event history** (like Event Sourcing).\n- Each step's result is persisted. If a worker crashes mid-workflow, it replays the event history to recover state and continue from where it left off.\n- Workflows can pause for days waiting for human approval or external webhook.\n\n```python\n@workflow.defn\nclass OnboardingWorkflow:\n    @workflow.run\n    async def run(self, user_id: str):\n        await workflow.execute_activity(create_account, user_id)\n        await workflow.execute_activity(send_welcome_email, user_id)\n        await workflow.execute_activity(provision_workspace, user_id)\n        # If this worker crashes after step 2, replay resumes at step 3\n```\n\n### Cron Parsing\n`0 9 * * MON` is parsed into the next N trigger times:\n- Use a library like `croner` or `later.js` to compute `next_run_at` from a cron expression.\n- Store `next_run_at` as an indexed timestamp. Leader queries: `SELECT * FROM jobs WHERE next_run_at <= NOW() AND status = 'PENDING' LIMIT 1000`.",
+      "interviewTip": "The exactly-once execution guarantee is the hardest part of this design. Walk through the optimistic locking (CAS) approach on the database — it is simpler and more reliable than distributed locks. Also mention idempotent handlers as a defense-in-depth measure. Temporal is worth naming as a production-grade solution that solves exactly these problems with durable workflow state.",
+      "references": [
+        {
+          "title": "Temporal.io: What is Temporal?",
+          "url": "https://docs.temporal.io/temporal"
+        },
+        {
+          "title": "Quartz Scheduler Documentation",
+          "url": "https://www.quartz-scheduler.org/documentation/"
+        }
+      ],
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "sd-rel-001",
+      "title": "High Availability: Multi-Region & Active-Active",
+      "category": "System Design",
+      "subcategory": "Scalability & Reliability",
+      "difficulty": "expert",
+      "tags": [
+        "high-availability",
+        "multi-region",
+        "active-active",
+        "rpo-rto",
+        "geodns",
+        "cockroachdb",
+        "spanner"
+      ],
+      "summary": "Design multi-region systems with RPO/RTO targets, active-active vs active-passive trade-offs, global load balancing, cross-region replication, and conflict resolution.",
+      "content": "## High Availability: Multi-Region & Active-Active\n\n### RPO vs RTO — Define Targets First\n\n| Metric | Definition | Example |\n|:---|:---|:---|\n| **RPO** (Recovery Point Objective) | Max acceptable data loss (time window) | RPO = 1 minute: max 1 minute of transactions can be lost |\n| **RTO** (Recovery Time Objective) | Max acceptable downtime | RTO = 30 seconds: system must be serving traffic within 30s |\n\n**Tier examples**:\n- Banking: RPO = 0 (zero data loss), RTO = 30s\n- E-commerce: RPO = 1 min, RTO = 5 min\n- Analytics: RPO = 1 hour, RTO = 4 hours\n\n### Active-Passive vs Active-Active\n\n#### Active-Passive (Failover)\n```\n  Users ──► Region US (PRIMARY — handles all traffic)\n               │\n               │ Async replication\n               ▼\n            Region EU (STANDBY — read-only, ready to take over)\n\n  On failure: DNS update points users to EU.\n  Failover time: 30s–5min (DNS TTL + health check interval)\n```\n\n**Pros**: Simple. No conflict resolution needed. RPO = replication lag.\n**Cons**: EU capacity is idle (wasted cost). Failover takes time (RTO ≥ 30s).\n\n#### Active-Active (Both Regions Serve Traffic)\n```\n  Users in US ──► Region US ──► Local DB (accepts writes)\n                       │\n                       │ Bidirectional replication (~100ms latency)\n                       │\n  Users in EU ──► Region EU ──► Local DB (accepts writes)\n```\n\n**Pros**: Both regions are utilized. Sub-second failover (GeoDNS reroutes instantly).\n**Cons**: Concurrent writes to both regions create **conflicts**. Cross-region write coordination adds latency.\n\n### Global Load Balancing\n\n#### GeoDNS\nDNS resolver returns different IP addresses based on the requester's geographic location:\n```\napi.example.com → 104.21.1.1  (for users in North America)\napi.example.com → 172.67.1.1  (for users in Europe)\n```\n**Limitation**: DNS TTL (60–300s) means failover takes time. GeoDNS is fast but not instant.\n\n#### Anycast Routing\nMultiple regions announce the same IP address to the internet. BGP routes each user's request to the **topologically nearest** region:\n- Used by: Cloudflare, Google, Fastly.\n- Failover is nearly instant (BGP re-converges in seconds) without DNS TTL delays.\n\n### Cross-Region Replication Latency\n- US East ↔ EU West: ~80ms round-trip\n- US East ↔ Asia Pacific: ~200ms round-trip\n\nFor synchronous replication, every write must wait for the remote region to ACK:\n- A write in US with sync replication to EU adds **80ms to write latency**.\n- This is often unacceptable. **Asynchronous replication** is the default → creates RPO gap.\n\n### Conflict Resolution in Active-Active\n\n**Problem**: User updates their name in the US region at T=100ms, and in the EU region at T=110ms (due to clock skew, EU's update arrives at the US at T=95ms in the US's logical time).\n\n**Solutions**:\n1. **Last-Write-Wins (LWW) with NTP timestamps**: Simple. Risk of data loss with clock skew.\n2. **Hybrid Logical Clocks (HLC)**: Combines physical time with logical time (Lamport clock). Used by CockroachDB and Yugabyte.\n3. **Region affinity**: Pin user writes to their home region. EU users always write to EU, US users to US — eliminates most conflicts.\n4. **CRDTs**: For counters and sets, mathematically guaranteed conflict-free merge.\n\n### Google Spanner & CockroachDB: Global SQL\n\n**Google Spanner**:\n- Uses **TrueTime** (GPS + atomic clocks) to assign globally consistent timestamps.\n- External consistency: If transaction T2 starts after T1 commits (in real time), T2's timestamp is guaranteed to be larger than T1's.\n- True serializable global transactions at 99th percentile ~10ms latency.\n\n**CockroachDB**:\n- Open-source Spanner-inspired distributed SQL.\n- Raft consensus per data range. Multi-region configs: regions pinned to specific ranges.\n- **Follower reads**: Read slightly-stale data from local region replica without cross-region roundtrip (bounded staleness ~4s).\n\n### SLA Targets and Uptime Math\n| SLA | Downtime/year | Downtime/month |\n|:---|:---|:---|\n| 99% | 3.65 days | 7.2 hours |\n| 99.9% | 8.7 hours | 43.8 min |\n| 99.99% | 52 min | 4.4 min |\n| 99.999% | 5.3 min | 26 sec |",
+      "interviewTip": "Start by clarifying RPO and RTO — this shows engineering rigor. Many candidates jump to 'use active-active' without understanding the conflict resolution cost. The nuanced answer: active-active is excellent for stateless services (API servers, caches), but stateful databases in active-active require careful conflict resolution strategy. Mention region affinity (pin user to home region) as the simplest conflict avoidance strategy.",
+      "references": [
+        {
+          "title": "Google Spanner: Globally-Distributed Databases",
+          "url": "https://static.googleusercontent.com/media/research.google.com/en//archive/spanner-osdi2012.pdf"
+        },
+        {
+          "title": "CockroachDB: Multi-Region Docs",
+          "url": "https://www.cockroachlabs.com/docs/stable/multiregion-overview.html"
+        }
+      ],
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "sd-hld-007",
+      "title": "Design a Ride-Sharing System (Uber/Ola)",
+      "category": "System Design",
+      "subcategory": "High Level Design",
+      "difficulty": "expert",
+      "tags": [
+        "ride-sharing",
+        "geospatial",
+        "h3",
+        "geohash",
+        "websocket",
+        "matching",
+        "uber"
+      ],
+      "summary": "Design a ride-sharing platform covering driver location tracking, geospatial indexing with H3/Geohash, matching algorithms, surge pricing, and trip lifecycle at Uber scale.",
+      "content": "## Design a Ride-Sharing System (Uber/Ola)\n\n### Capacity Estimation\n- **Rides**: 10M rides/day (~116 rides/sec)\n- **Active drivers**: 1M drivers online at peak\n- **Driver location updates**: Every driver sends GPS update every 4 seconds\n  → 1M drivers × 15 updates/min = **15M location updates/minute** (~250K/sec)\n- **Matching**: ~116 match computations/sec (one per ride request)\n- **Storage**: Each location update = ~100 bytes → 15M × 100B = 1.5 GB/min of raw GPS data\n\n### High-Level Architecture\n\n```\n  ┌──────────────┐         ┌──────────────┐\n  │  Driver App  │         │  Rider App   │\n  └──────┬───────┘         └──────┬───────┘\n         │ WebSocket/MQTT          │ REST + WebSocket\n         ▼                         ▼\n  ┌───────────────────────────────────────────┐\n  │              API Gateway / LB              │\n  └──────┬─────────────┬──────────────────────┘\n         │             │\n  ┌──────▼──────┐  ┌───▼──────────────┐\n  │  Location   │  │  Trip/Matching    │\n  │  Service    │  │  Service          │\n  └──────┬──────┘  └───┬──────────────┘\n         │              │\n  ┌──────▼──────┐  ┌───▼──────────────┐\n  │  Redis Geo  │  │  Kafka            │\n  │  (Driver    │  │  (trip-events)    │\n  │   Positions)│  └──────────────────┘\n  └─────────────┘       │\n                  ┌─────▼──────────────┐\n                  │  PostgreSQL         │\n                  │  (trips, users,     │\n                  │   drivers, pricing) │\n                  └────────────────────┘\n```\n\n### Driver Location Tracking\n\n#### WebSocket vs MQTT\n- **WebSocket**: Full-duplex TCP. Good for web clients. Higher overhead per connection.\n- **MQTT**: Designed for IoT/mobile. Lightweight protocol (2-byte header). Supports QoS levels (0: at-most-once, 1: at-least-once, 2: exactly-once). Ideal for mobile apps on unreliable networks.\n\n**Decision**: MQTT for driver/rider mobile apps. WebSocket for web dashboard.\n\n#### Scale: 250K location updates/sec\n1. MQTT broker cluster (EMQ X or HiveMQ) — horizontally scalable.\n2. Location updates published to **Kafka** topic `driver-locations`.\n3. **Location Service** consumers: Update driver position in **Redis Geo** (geospatial sorted set).\n\n### Geospatial Indexing: H3 vs Geohash\n\n#### Geohash\nEncodes a lat/lon pair into a base32 string. Nearby locations share prefixes:\n```\nSan Francisco: 9q8yy...  (length 5 = ~5km grid)\nNearby driver: 9q8yz...  (shares prefix 9q8y)\n```\n**Problem**: Grid edge issue — two adjacent cells can have very different geohash prefixes (at the boundary), breaking prefix-based proximity queries.\n\n#### H3 (Uber's Hexagonal Hierarchical Grid)\nUber's open-source library. Divides the world into **hexagonal cells** at 16 resolution levels.\n- **Resolution 9**: Each hexagon ~0.1 km² (city block scale)\n- **No edge problem**: Hexagons have equal distance to all 6 neighbors (vs rectangles where corners are farther)\n- Driver's H3 cell updated on location change. Finding nearby drivers = query all drivers in the same H3 cell + 6 neighboring cells.\n\n```python\nimport h3\n\n# Get H3 cell for rider's location\nrider_cell = h3.geo_to_h3(37.7749, -122.4194, resolution=9)\n\n# Get rider's cell + 6 neighbors (k_ring = 1)\nsearch_cells = h3.k_ring(rider_cell, 1)\n\n# Find all available drivers in these cells\navailable_drivers = redis.smembers(f\"drivers:{cell}\" for cell in search_cells)\n```\n\n### Matching Algorithm\nWhen a rider requests a ride:\n1. Find all available drivers within 1 km (1–2 H3 cells outward).\n2. Score each driver: `score = f(ETA, driver_rating, acceptance_rate)`\n3. Dispatch to highest-scored driver → start 10s accept timer.\n4. If driver declines or no response: retry with next candidate.\n\n**ETA Calculation**: Use a routing engine (Mapbox, Google Maps API, or OSRM self-hosted) to compute real road travel time, not straight-line distance.\n\n### Trip Lifecycle State Machine\n```\nREQUESTED ──► MATCHED ──► DRIVER_ARRIVING ──► TRIP_STARTED ──► COMPLETED\n     │              │                                              │\n     └──────────────┴─────── CANCELLED (with/without fee) ────────┘\n```\n\nEach state transition triggers a Kafka event → downstream services update:\n- **Notification Service**: Push notifications to rider/driver.\n- **Billing Service**: Start fare meter on TRIP_STARTED, charge on COMPLETED.\n- **Analytics**: Real-time supply/demand tracking.\n\n### Surge Pricing\n```\nSurge Multiplier = f(demand / supply in H3 cell)\n\nAlgorithm:\n1. Count ride requests in cell (last 5 min): demand\n2. Count available drivers in cell: supply\n3. Ratio > 1.5 → 1.2x surge\n4. Ratio > 2.0 → 1.5x surge\n5. Ratio > 3.0 → 2.0x surge\n\nRecalculated every 60 seconds per H3 cell.\nSurge map cached in Redis, served to rider app before confirmation.\n```\n\n### Supply/Demand Prediction\n- **ML model** trained on historical ride data, events, weather, time-of-day.\n- Predicts demand per H3 cell for next 30 minutes.\n- Driver incentive system: Show drivers a heatmap of predicted surge areas to preposition supply.\n- Deployed as a real-time inference service using feature stores (Feast) + model serving (BentoML/Seldon).",
+      "interviewTip": "The hardest part of this design is the geospatial indexing — interviewers want to hear about H3 or Geohash, not just 'use latitude/longitude with a range query.' Explain WHY H3 hexagonal grids are better than geohash (no edge problem, equal neighbor distance). Also: 250K location updates/second is the capacity challenge — show you've thought through the MQTT → Kafka → Redis pipeline for handling it.",
+      "references": [
+        {
+          "title": "Uber Engineering: H3 Geospatial Indexing System",
+          "url": "https://eng.uber.com/h3/"
+        },
+        {
+          "title": "Uber Engineering: Real-Time Marketplace",
+          "url": "https://www.uber.com/en-IN/blog/engineering/"
+        }
+      ],
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    }
+  ]
+}

@@ -1,0 +1,166 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.3);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.5);
+}
+
+/* Smooth scrolling */
+html {
+  scroll-behavior: smooth;
+}
+
+/* Glassmorphism & Backdrop blur */
+.glass-panel {
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+/* Card hover animation */
+.card-hover {
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.card-hover:hover {
+  transform: translateY(-3px);
+}
+
+/* Markdown content styling */
+.markdown-content h1 { 
+  font-size: 1.625rem; 
+  font-weight: 700; 
+  margin-top: 1.5rem; 
+  margin-bottom: 0.75rem; 
+  letter-spacing: -0.02em;
+}
+.markdown-content h2 { 
+  font-size: 1.375rem; 
+  font-weight: 600; 
+  margin-top: 1.35rem; 
+  margin-bottom: 0.6rem; 
+  letter-spacing: -0.01em;
+}
+.markdown-content h3 { 
+  font-size: 1.15rem; 
+  font-weight: 600; 
+  margin-top: 1.1rem; 
+  margin-bottom: 0.5rem; 
+}
+.markdown-content p { 
+  margin-bottom: 0.85rem; 
+  line-height: 1.75; 
+}
+.markdown-content ul { 
+  list-style-type: disc; 
+  padding-left: 1.5rem; 
+  margin-bottom: 0.85rem; 
+}
+.markdown-content ol { 
+  list-style-type: decimal; 
+  padding-left: 1.5rem; 
+  margin-bottom: 0.85rem; 
+}
+.markdown-content li { 
+  margin-bottom: 0.35rem; 
+  line-height: 1.65; 
+}
+.markdown-content blockquote { 
+  border-left: 3px solid #6366f1; 
+  padding-left: 1rem; 
+  margin: 1.25rem 0; 
+  font-style: italic; 
+}
+.markdown-content pre { 
+  margin: 1.2rem 0; 
+  border-radius: 0.75rem; 
+  overflow-x: auto; 
+}
+.markdown-content table { 
+  width: 100%; 
+  border-collapse: collapse; 
+  margin: 1.25rem 0; 
+  font-size: 0.875rem;
+  display: block;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.markdown-content th { 
+  padding: 0.625rem 0.875rem; 
+  text-align: left; 
+  font-weight: 600; 
+  border-bottom: 2px solid rgba(148, 163, 184, 0.2); 
+}
+.markdown-content td { 
+  padding: 0.625rem 0.875rem; 
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12); 
+}
+.markdown-content a { 
+  color: #6366f1; 
+  text-decoration: underline; 
+  text-underline-offset: 3px;
+}
+.markdown-content a:hover { 
+  color: #818cf8; 
+}
+
+/* Light / Dark text adjustments in markdown */
+.dark .markdown-content h1, 
+.dark .markdown-content h2, 
+.dark .markdown-content h3, 
+.dark .markdown-content strong {
+  color: #f8fafc;
+}
+.dark .markdown-content p, 
+.dark .markdown-content li, 
+.dark .markdown-content td {
+  color: #cbd5e1;
+}
+.dark .markdown-content th {
+  background: rgba(30, 41, 59, 0.7);
+  color: #f1f5f9;
+}
+.dark .markdown-content code:not(pre code) {
+  background: #1e293b;
+  color: #a5b4fc;
+  padding: 0.15rem 0.4rem;
+  border-radius: 0.375rem;
+  font-size: 0.85em;
+  border: 1px solid rgba(148, 163, 184, 0.15);
+}
+
+/* Light mode markdown overrides */
+:not(.dark) .markdown-content h1,
+:not(.dark) .markdown-content h2,
+:not(.dark) .markdown-content h3,
+:not(.dark) .markdown-content strong {
+  color: #0f172a;
+}
+:not(.dark) .markdown-content p,
+:not(.dark) .markdown-content li,
+:not(.dark) .markdown-content td {
+  color: #334155;
+}
+:not(.dark) .markdown-content th {
+  background: #f1f5f9;
+  color: #0f172a;
+}
+:not(.dark) .markdown-content code:not(pre code) {
+  background: #f1f5f9;
+  color: #4f46e5;
+  padding: 0.15rem 0.4rem;
+  border-radius: 0.375rem;
+  font-size: 0.85em;
+  border: 1px solid rgba(203, 213, 225, 0.8);
+}

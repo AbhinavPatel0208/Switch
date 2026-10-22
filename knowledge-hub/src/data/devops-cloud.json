@@ -1,0 +1,513 @@
+{
+  "category": "DevOps & Cloud",
+  "icon": "HiCloud",
+  "color": "#f97316",
+  "subcategories": [
+    "Docker & Containers",
+    "Kubernetes",
+    "AWS Cloud",
+    "CI/CD & Automation",
+    "Monitoring & Observability"
+  ],
+  "topics": [
+    {
+      "id": "devops-doc-001",
+      "title": "Docker Multi-Stage Builds & Spring Boot Layered JARs",
+      "category": "DevOps & Cloud",
+      "subcategory": "Docker & Containers",
+      "difficulty": "medium",
+      "tags": [
+        "docker",
+        "containers",
+        "multi-stage",
+        "spring-boot",
+        "caching"
+      ],
+      "summary": "Slash Docker container images from 800MB to 180MB using multi-stage builds, non-root user security, and Spring Boot layered JARs.",
+      "content": "## Production Dockerfile for Enterprise Spring Boot\n\n### Multi-Stage + Layered JAR Solution\nSpring Boot 2.3+ separates JAR contents into 4 distinct layers with different change frequencies:\n1. `dependencies` (third-party JARs, changes rarely)\n2. `spring-boot-loader` (loaders, changes rarely)\n3. `snapshot-dependencies` (internal library snapshots)\n4. `application` (your business code, changes on every commit!)\n\n```dockerfile\n# Stage 1: Build & Extract Layers\nFROM eclipse-temurin:21-jdk-alpine AS builder\nWORKDIR /builder\n\nCOPY pom.xml mvnw ./\nCOPY .mvn .mvn\nRUN ./mvnw dependency:go-offline -B\n\nCOPY src ./src\nRUN ./mvnw clean package -DskipTests\nRUN java -Djarmode=layertools -jar target/*.jar extract\n\n# Stage 2: Minimal Production Runtime\nFROM eclipse-temurin:21-jre-alpine\nWORKDIR /app\n\nRUN addgroup -S appgroup && adduser -S appuser -G appgroup\n\nCOPY --from=builder --chown=appuser:appgroup /builder/dependencies/ ./\nCOPY --from=builder --chown=appuser:appgroup /builder/spring-boot-loader/ ./\nCOPY --from=builder --chown=appuser:appgroup /builder/snapshot-dependencies/ ./\nCOPY --from=builder --chown=appuser:appgroup /builder/application/ ./\n\nUSER appuser\nEXPOSE 8080\n\nHEALTHCHECK --interval=20s --timeout=3s --retries=3 \\\n  CMD wget --no-verbose --tries=1 --spider http://localhost:8080/actuator/health/liveness || exit 1\n\nENTRYPOINT [\"java\", \"org.springframework.boot.loader.launch.JarLauncher\"]\n```\n\n### Results\n- Image size reduced from **~850MB to ~190MB**.\n- CI/CD build cache reuses dependencies layer: Daily code deploys take **seconds** instead of minutes!",
+      "references": [
+        {
+          "title": "Spring Boot Reference: Layering Docker Images",
+          "url": "https://docs.spring.io/spring-boot/docs/current/reference/html/container-images.html"
+        }
+      ],
+      "interviewTip": "Explain how ordering Docker layers from least-frequently changed to most-frequently changed accelerates CI/CD pipeline pushes by maximizing Docker layer cache hits.",
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "devops-k8s-001",
+      "title": "Kubernetes Pod Lifecycle, Probes & Zero-Downtime Rollouts",
+      "category": "DevOps & Cloud",
+      "subcategory": "Kubernetes",
+      "difficulty": "hard",
+      "tags": [
+        "kubernetes",
+        "k8s",
+        "probes",
+        "rolling-update",
+        "zero-downtime"
+      ],
+      "summary": "Master Kubernetes Liveness, Readiness, and Startup probes, graceful shutdown hooks, and RollingUpdate deployment strategies.",
+      "content": "## Kubernetes Pod Lifecycle & Zero-Downtime Deployments\n\n### The Three Essential Probes\n\n| Probe | Purpose | Action on Failure |\n| :--- | :--- | :--- |\n| **Startup Probe** | Gives slow-booting apps (Spring Boot taking 45s) time to initialize without premature kills. | Kills container and restarts it. |\n| **Readiness Probe** | Determines if Pod is ready to receive traffic from Kubernetes Service. | Removes Pod IP from Service Endpoints (traffic stops routing to it). |\n| **Liveness Probe** | Detects deadlocks or unrecoverable freezes where app is running but unable to make progress. | Restarts the container. |\n\n### Production Probe Configuration\n```yaml\nspec:\n  containers:\n  - name: order-service\n    image: order-service:2.4.0\n    resources:\n      requests:\n        memory: \"512Mi\"\n        cpu: \"250m\"\n      limits:\n        memory: \"1Gi\"\n        cpu: \"1000m\"\n    startupProbe:\n      httpGet:\n        path: /actuator/health/liveness\n        port: 8080\n      failureThreshold: 30\n      periodSeconds: 3\n    readinessProbe:\n      httpGet:\n        path: /actuator/health/readiness\n        port: 8080\n      periodSeconds: 5\n    livenessProbe:\n      httpGet:\n        path: /actuator/health/liveness\n        port: 8080\n      periodSeconds: 10\n```\n\n### Zero-Downtime Rolling Update Strategy\n```yaml\nspec:\n  strategy:\n    type: RollingUpdate\n    rollingUpdate:\n      maxSurge: 25%         # Can spin up 25% extra temporary pods during deploy\n      maxUnavailable: 0     # Guarantees 100% capacity available at all times!\n```",
+      "references": [
+        {
+          "title": "Kubernetes Documentation: Pod Lifecycle",
+          "url": "https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/"
+        }
+      ],
+      "interviewTip": "Emphasize why Readiness probe must never test external dependencies (like database down): If the DB blips, all pods fail readiness simultaneously, cascading into a total system outage.",
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "devops-k8s-002",
+      "title": "Kubernetes HPA (Horizontal Pod Autoscaler) & Resource Sizing",
+      "category": "DevOps & Cloud",
+      "subcategory": "Kubernetes",
+      "difficulty": "medium",
+      "tags": [
+        "kubernetes",
+        "hpa",
+        "scaling",
+        "metrics-server",
+        "cpu-memory"
+      ],
+      "summary": "Dynamically scale pods based on CPU, memory, and custom Prometheus metrics with Horizontal Pod Autoscaler.",
+      "content": "## Horizontal Pod Autoscaler (HPA) Architecture\n\n### How HPA Works\nThe HPA controller queries the **Metrics Server** (every 15s by default) and adjusts the replica count using the formula:\n\nDesired Replicas = ceil( Current Replicas x (Current Metric Value / Target Metric Value) )\n\n```yaml\napiVersion: autoscaling/v2\nkind: HorizontalPodAutoscaler\nmetadata:\n  name: order-service-hpa\nspec:\n  scaleTargetRef:\n    apiVersion: apps/v1\n    kind: Deployment\n    name: order-service\n  minReplicas: 3\n  maxReplicas: 25\n  metrics:\n  - type: Resource\n    resource:\n      name: cpu\n      target:\n        type: Utilization\n        averageUtilization: 70 # Scale up when average CPU exceeds 70% of requested CPU\n  - type: Resource\n    resource:\n      name: memory\n      target:\n        type: Utilization\n        averageUtilization: 80\n  behavior:\n    scaleDown:\n      stabilizationWindowSeconds: 300 # Wait 5 minutes to prevent flapping (scale down thrashing)\n```\n\n> **Crucial Rule:** HPA requires your Deployment containers to have explicit **`resources.requests`** configured! Without requests, HPA cannot calculate percentage utilization and will fail to scale.",
+      "references": [
+        {
+          "title": "Kubernetes HPA Documentation",
+          "url": "https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/"
+        }
+      ],
+      "interviewTip": "Explain why CPU is better than Memory for HPA scaling: Java garbage collection retains heap memory, meaning memory usage rarely drops quickly, preventing efficient scale-down without stabilization windows.",
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "devops-aws-001",
+      "title": "AWS Multi-AZ VPC Architecture: Public vs Private Subnets & NAT Gateways",
+      "category": "DevOps & Cloud",
+      "subcategory": "AWS Cloud",
+      "difficulty": "hard",
+      "tags": [
+        "aws",
+        "vpc",
+        "subnets",
+        "nat-gateway",
+        "security-groups"
+      ],
+      "summary": "Architect high-availability enterprise AWS VPCs with public load balancer subnets, private app subnets, and isolated database subnets across Multi-AZ.",
+      "content": "## AWS Enterprise Multi-AZ VPC Architecture\n\n### The 3-Tier Subnet Topology\nAn enterprise production VPC spanning two Availability Zones (`us-east-1a`, `us-east-1b`) uses 3 distinct subnet tiers:\n\n```\nInternet\n   │\n   ▼\n[Internet Gateway (IGW)]\n   │\n   ├── Public Subnet (AZ-A) ──► AWS ALB (Public Facing) + NAT Gateway A\n   ├── Public Subnet (AZ-B) ──► AWS ALB (Public Facing) + NAT Gateway B\n   │\n   ├── Private App Subnet (AZ-A) ──► EKS Worker Pods / EC2 (Outbound internet via NAT-A)\n   ├── Private App Subnet (AZ-B) ──► EKS Worker Pods / EC2 (Outbound internet via NAT-B)\n   │\n   └── Isolated DB Subnet (AZ-A) ──► AWS RDS PostgreSQL (Primary) ◄── (ZERO internet access!)\n       Isolated DB Subnet (AZ-B) ──► AWS RDS PostgreSQL (Standby Replica)\n```\n\n### Routing Rules\n\n| Subnet Tier | Default Route (`0.0.0.0/0`) | Internet Reachable? | Purpose |\n| :--- | :--- | :--- | :--- |\n| **Public Subnets** | Target: **Internet Gateway (IGW)** | **Yes** (Public IPs) | ALBs, Bastion jump hosts |\n| **Private App Subnets** | Target: **NAT Gateway** (in public subnet) | Outbound only | Application servers, microservices |\n| **Isolated DB Subnets** | **None** (Local VPC route only) | **No** (Completely isolated) | RDS PostgreSQL, Aurora, ElastiCache |\n\n### Security Group Chaining (Least Privilege)\nNever open database ports (`5432`) to IP CIDR ranges:\n- **ALB Security Group**: Inbound `443` from `0.0.0.0/0`.\n- **App Security Group**: Inbound `8080` ONLY from ALB Security Group ID.\n- **DB Security Group**: Inbound `5432` ONLY from App Security Group ID.",
+      "references": [
+        {
+          "title": "AWS Architecture Center: VPC Reference Architecture",
+          "url": "https://docs.aws.amazon.com/vpc/latest/userguide/VPC_Scenario2.html"
+        }
+      ],
+      "interviewTip": "Highlight why NAT Gateways must be placed redundantly in multiple AZs: If AZ-A experiences an outage, instances in private subnet AZ-B still have a local NAT Gateway for outbound internet.",
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "devops-cicd-001",
+      "title": "CI/CD Pipeline with GitHub Actions for Spring Boot",
+      "category": "DevOps & Cloud",
+      "subcategory": "CI/CD & Automation",
+      "difficulty": "medium",
+      "tags": [
+        "github-actions",
+        "ci-cd",
+        "spring-boot",
+        "docker",
+        "kubernetes",
+        "maven"
+      ],
+      "summary": "Build a production-grade GitHub Actions pipeline that tests, containerizes, and deploys a Spring Boot service to Kubernetes across staging and production environments.",
+      "content": "## GitHub Actions CI/CD for Spring Boot\n\n### Pipeline Architecture\n```\nPush to feature/* ──► Build & Test\nPush to main      ──► Build & Test ──► Docker Build/Push ──► Deploy to Staging ──► Deploy to Prod (manual gate)\n```\n\n### Complete Workflow File\n```yaml\n# .github/workflows/ci-cd.yml\nname: Spring Boot CI/CD\n\non:\n  push:\n    branches: [ main, 'feature/**' ]\n  pull_request:\n    branches: [ main ]\n\nenv:\n  REGISTRY: ghcr.io\n  IMAGE_NAME: ${{ github.repository }}\n\njobs:\n  build-and-test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n\n      - name: Set up JDK 21\n        uses: actions/setup-java@v4\n        with:\n          java-version: '21'\n          distribution: 'temurin'\n          cache: maven          # Cache ~/.m2 between runs\n\n      - name: Build and test\n        run: mvn clean verify -B\n\n      - name: Upload test report\n        if: always()\n        uses: actions/upload-artifact@v4\n        with:\n          name: surefire-reports\n          path: target/surefire-reports/\n\n  docker-publish:\n    needs: build-and-test\n    if: github.ref == 'refs/heads/main'\n    runs-on: ubuntu-latest\n    outputs:\n      image-tag: ${{ steps.meta.outputs.tags }}\n    steps:\n      - uses: actions/checkout@v4\n\n      - name: Log in to GHCR\n        uses: docker/login-action@v3\n        with:\n          registry: ${{ env.REGISTRY }}\n          username: ${{ github.actor }}\n          password: ${{ secrets.GITHUB_TOKEN }}  # Built-in, no manual secret needed\n\n      - name: Extract Docker metadata\n        id: meta\n        uses: docker/metadata-action@v5\n        with:\n          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}\n          tags: |\n            type=sha,prefix=sha-\n            type=raw,value=latest\n\n      - name: Build and push image\n        uses: docker/build-push-action@v5\n        with:\n          context: .\n          push: true\n          tags: ${{ steps.meta.outputs.tags }}\n          cache-from: type=gha     # GitHub Actions cache for Docker layers\n          cache-to: type=gha,mode=max\n\n  deploy-staging:\n    needs: docker-publish\n    runs-on: ubuntu-latest\n    environment: staging           # Requires environment protection rules\n    steps:\n      - uses: actions/checkout@v4\n\n      - name: Deploy to staging K8s\n        env:\n          KUBE_CONFIG: ${{ secrets.STAGING_KUBE_CONFIG }}\n        run: |\n          echo \"$KUBE_CONFIG\" | base64 -d > kubeconfig.yaml\n          kubectl --kubeconfig=kubeconfig.yaml set image deployment/order-service \\\n            order-service=${{ needs.docker-publish.outputs.image-tag }}\n\n  deploy-prod:\n    needs: deploy-staging\n    runs-on: ubuntu-latest\n    environment: production         # Requires manual approval from team lead\n    steps:\n      - uses: actions/checkout@v4\n      - name: Deploy to production K8s\n        env:\n          KUBE_CONFIG: ${{ secrets.PROD_KUBE_CONFIG }}\n        run: |\n          echo \"$KUBE_CONFIG\" | base64 -d > kubeconfig.yaml\n          kubectl --kubeconfig=kubeconfig.yaml set image deployment/order-service \\\n            order-service=${{ needs.docker-publish.outputs.image-tag }}\n```\n\n### Branch Protection & Required Checks\nConfigure in GitHub repository settings:\n- **Require status checks**: `build-and-test` must pass before merge.\n- **Require pull request reviews**: At least 1 approval.\n- **Restrict who can push to main**: Only CI service account.\n\n### Secrets Management\n- Use **GitHub Environments** (Settings > Environments) to scope secrets per environment.\n- Rotate credentials via GitHub Actions OIDC (OpenID Connect) to avoid long-lived secrets: AWS and GCP support keyless authentication via OIDC tokens.\n- Never print secrets: `echo $SECRET` in logs is masked, but `echo ${SECRET:0:3}` can leak characters.\n\n### Gradle vs Maven Caching\n```yaml\n# For Gradle projects:\n- uses: actions/setup-java@v4\n  with:\n    cache: gradle   # Caches ~/.gradle/caches and ~/.gradle/wrapper\n```",
+      "interviewTip": "Interviewers love the OIDC keyless auth story: instead of storing long-lived AWS_ACCESS_KEY_ID secrets in GitHub, configure an IAM role that trusts GitHub's OIDC provider — Actions gets a short-lived token per run with no static credentials to rotate or leak.",
+      "references": [
+        {
+          "title": "GitHub Actions Documentation",
+          "url": "https://docs.github.com/en/actions"
+        },
+        {
+          "title": "Configuring OpenID Connect in AWS",
+          "url": "https://docs.github.com/en/actions/deployment/security-hardening-your-deployments/configuring-openid-connect-in-amazon-web-services"
+        }
+      ],
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "devops-doc-002",
+      "title": "Docker Networking: Bridge, Host & Overlay",
+      "category": "DevOps & Cloud",
+      "subcategory": "Docker & Containers",
+      "difficulty": "medium",
+      "tags": [
+        "docker",
+        "networking",
+        "bridge",
+        "overlay",
+        "docker-compose",
+        "dns"
+      ],
+      "summary": "Understand Docker's network drivers — from the default bridge to overlay for multi-host communication — and how containers discover each other by name.",
+      "content": "## Docker Networking Deep Dive\n\n### Network Driver Comparison\n\n| Driver | Isolation | Multi-Host | DNS by Name | Use Case |\n| :--- | :--- | :--- | :--- | :--- |\n| **bridge** (default) | Container-level | No | No (default bridge) | Single-host dev |\n| **user-defined bridge** | Container-level | No | **Yes** | docker-compose, local |\n| **host** | None (shares host network) | N/A | N/A | Max performance, low latency |\n| **overlay** | Container-level | **Yes** | Yes | Docker Swarm, K8s |\n| **none** | Complete isolation | No | No | Batch jobs, security |\n\n### Default vs User-Defined Bridge\n```\nDefault Bridge Network:\n  container-A (172.17.0.2) ──► can ping 172.17.0.3 (container-B)\n  container-A              ──► CANNOT ping \"container-B\" by name\n                               (no automatic DNS!)\n\nUser-Defined Bridge Network:\n  container-A ──► can ping \"order-service\" by container name\n  container-A ──► can ping \"postgres\" by service name\n                  (Docker embedded DNS resolves names!)\n```\n\n### docker-compose Networking\nEvery `docker-compose.yml` automatically creates a **user-defined bridge** named `<project>_default`:\n```yaml\nversion: '3.8'\nservices:\n  api:\n    image: order-service:latest\n    ports:\n      - \"8080:8080\"       # HOST:CONTAINER — publishes to host\n    networks:\n      - backend\n  postgres:\n    image: postgres:15\n    # No 'ports:' here! Only accessible inside the Docker network\n    environment:\n      POSTGRES_PASSWORD: secret\n    networks:\n      - backend\n  redis:\n    image: redis:7\n    networks:\n      - backend\n\nnetworks:\n  backend:\n    driver: bridge\n```\nIn this setup, `api` reaches postgres at `postgres:5432` by service name. The host machine has no direct access to port 5432 — that is the security win.\n\n### EXPOSE vs -p (Port Publishing)\n- **`EXPOSE 8080`** in Dockerfile: Documentation only. Declares intent. Does NOT open any port to the host.\n- **`-p 8080:8080`** in `docker run` or `ports:` in compose: Actually binds host interface to container port.\n- **`-P`** (uppercase): Publishes all `EXPOSE`d ports to random ephemeral host ports.\n\n### Host Network Mode\n```bash\ndocker run --network host nginx\n# nginx now listens on host port 80 directly — no NAT layer\n# Useful for: high-throughput UDP, service mesh sidecars\n# Risk: container can bind any host port — no isolation!\n```\n\n### Overlay Network (Docker Swarm / Multi-Host)\n```\n  Host A                        Host B\n  ┌─────────────────┐           ┌─────────────────┐\n  │  container-1    │           │  container-2    │\n  │  10.0.0.2       │◄─────────►│  10.0.0.3       │\n  │       │         │  VXLAN    │       │         │\n  │  overlay0       │  tunnel   │  overlay0       │\n  └────────┼────────┘           └────────┼────────┘\n           │ eth0:192.168.1.10           │ eth0:192.168.1.11\n```\nOverlay wraps container traffic in VXLAN UDP packets (port 4789) — containers communicate as if on the same LAN across physical hosts.\n\n### Container DNS Resolution\nDocker runs an embedded DNS server at `127.0.0.11` inside every container on a user-defined network. It resolves:\n- Service names in docker-compose\n- Container names with `--name`\n- Service VIPs in Swarm mode (load-balanced round-robin)",
+      "interviewTip": "A classic interview question: 'Why can't containers on the default bridge network talk by name?' Answer: The default bridge predates Docker's embedded DNS. Only user-defined bridges use the internal DNS resolver at 127.0.0.11. Always use user-defined networks in production.",
+      "references": [
+        {
+          "title": "Docker Networking Overview",
+          "url": "https://docs.docker.com/network/"
+        },
+        {
+          "title": "Use Bridge Networks",
+          "url": "https://docs.docker.com/network/bridge/"
+        }
+      ],
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "devops-k8s-003",
+      "title": "Kubernetes Networking: Services, Ingress & Network Policies",
+      "category": "DevOps & Cloud",
+      "subcategory": "Kubernetes",
+      "difficulty": "hard",
+      "tags": [
+        "kubernetes",
+        "services",
+        "ingress",
+        "network-policy",
+        "nginx",
+        "tls"
+      ],
+      "summary": "Navigate Kubernetes networking from ClusterIP Services to Ingress TLS termination and NetworkPolicy firewall rules for pod-to-pod security.",
+      "content": "## Kubernetes Networking: The Full Picture\n\n### Service Types\n\n| Type | Accessibility | Use Case |\n| :--- | :--- | :--- |\n| **ClusterIP** | Only inside cluster | Internal microservice communication |\n| **NodePort** | Node IP + static port (30000-32767) | Dev/test external access |\n| **LoadBalancer** | Cloud load balancer provisioned | Production external traffic |\n| **ExternalName** | DNS CNAME alias | Abstracting external services (RDS endpoint) |\n\n```yaml\n# ClusterIP — most common for internal services\napiVersion: v1\nkind: Service\nmetadata:\n  name: order-service\nspec:\n  type: ClusterIP\n  selector:\n    app: order-service      # Matches pod labels\n  ports:\n    - port: 80              # Service port (what callers use)\n      targetPort: 8080      # Container port (what the app listens on)\n```\n\n### Ingress Controller (NGINX)\n```yaml\napiVersion: networking.k8s.io/v1\nkind: Ingress\nmetadata:\n  name: api-ingress\n  annotations:\n    nginx.ingress.kubernetes.io/rewrite-target: /\n    cert-manager.io/cluster-issuer: letsencrypt-prod\nspec:\n  ingressClassName: nginx\n  tls:\n    - hosts:\n        - api.mycompany.com\n      secretName: api-tls-cert   # cert-manager auto-provisions this\n  rules:\n    - host: api.mycompany.com\n      http:\n        paths:\n          - path: /orders\n            pathType: Prefix\n            backend:\n              service:\n                name: order-service\n                port:\n                  number: 80\n          - path: /payments\n            pathType: Prefix\n            backend:\n              service:\n                name: payment-service\n                port:\n                  number: 80\n```\n\n### Traffic Flow\n```\nClient\n  │ HTTPS :443\n  ▼\nNGINX Ingress Controller (LoadBalancer Service)\n  │ TLS terminated here — HTTP internally\n  ├── /orders/*  ──► order-service (ClusterIP) ──► Order Pods\n  └── /payments/* ──► payment-service (ClusterIP) ──► Payment Pods\n```\n\n### NetworkPolicy: Pod-to-Pod Firewall\nBy default, all pods can talk to all pods. NetworkPolicy restricts this:\n```yaml\napiVersion: networking.k8s.io/v1\nkind: NetworkPolicy\nmetadata:\n  name: order-service-netpol\n  namespace: production\nspec:\n  podSelector:\n    matchLabels:\n      app: order-service\n  policyTypes:\n    - Ingress\n    - Egress\n  ingress:\n    - from:\n        - podSelector:\n            matchLabels:\n              app: api-gateway    # Only api-gateway can call order-service\n      ports:\n        - protocol: TCP\n          port: 8080\n  egress:\n    - to:\n        - podSelector:\n            matchLabels:\n              app: postgres       # order-service can only call postgres\n      ports:\n        - protocol: TCP\n          port: 5432\n```\n\n### kube-proxy & iptables\nkube-proxy runs on every node and programs `iptables` (or IPVS) rules to route Service virtual IP (ClusterIP) traffic to one of the backing pod IPs using NAT. When a pod scales up, kube-proxy adds a new iptables rule within ~1 second.",
+      "interviewTip": "Interviewers test whether you know NetworkPolicy is additive and default-deny only when a policy exists: if you create an Ingress NetworkPolicy for a pod, it also implicitly blocks all other ingress — but Egress is still unrestricted until you add an Egress policy. Always add both.",
+      "references": [
+        {
+          "title": "Kubernetes Services",
+          "url": "https://kubernetes.io/docs/concepts/services-networking/service/"
+        },
+        {
+          "title": "Kubernetes Ingress",
+          "url": "https://kubernetes.io/docs/concepts/services-networking/ingress/"
+        },
+        {
+          "title": "Network Policies",
+          "url": "https://kubernetes.io/docs/concepts/services-networking/network-policies/"
+        }
+      ],
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "devops-k8s-004",
+      "title": "Kubernetes ConfigMaps, Secrets & External Secrets Operator",
+      "category": "DevOps & Cloud",
+      "subcategory": "Kubernetes",
+      "difficulty": "medium",
+      "tags": [
+        "kubernetes",
+        "configmap",
+        "secrets",
+        "external-secrets",
+        "aws-secrets-manager",
+        "sealed-secrets"
+      ],
+      "summary": "Manage application configuration and sensitive credentials in Kubernetes using ConfigMaps, Secrets, and production-grade solutions like External Secrets Operator with AWS Secrets Manager.",
+      "content": "## Kubernetes Configuration Management\n\n### ConfigMap — Non-Sensitive Configuration\n```yaml\napiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: order-service-config\ndata:\n  APP_ENV: production\n  LOG_LEVEL: INFO\n  application.properties: |\n    server.port=8080\n    spring.datasource.url=jdbc:postgresql://postgres:5432/orders\n    management.endpoints.web.exposure.include=health,info,prometheus\n```\n\n### Mounting ConfigMap in a Pod\n```yaml\nspec:\n  containers:\n  - name: order-service\n    envFrom:\n      - configMapRef:\n          name: order-service-config     # All keys become env vars\n    volumeMounts:\n      - name: config-volume\n        mountPath: /app/config           # application.properties file here\n  volumes:\n    - name: config-volume\n      configMap:\n        name: order-service-config\n        items:\n          - key: application.properties\n            path: application.properties\n```\n\n### Kubernetes Secret — Base64 Encoded (NOT Encrypted!)\n```bash\n# Create secret imperatively\nkubectl create secret generic db-credentials \\\n  --from-literal=username=appuser \\\n  --from-literal=password=S3cretP@ss\n\n# The stored value is just base64 — anyone with kubectl can decode it:\nkubectl get secret db-credentials -o jsonpath='{.data.password}' | base64 -d\n```\n**WARNING**: Kubernetes Secrets at rest are base64-encoded, NOT encrypted by default. Enable `EncryptionConfiguration` with an AES key or KMS provider for actual encryption at rest.\n\n### Sealed Secrets (Bitnami) — GitOps Safe\n```bash\n# Install Sealed Secrets controller\nhelm install sealed-secrets sealed-secrets/sealed-secrets -n kube-system\n\n# Encrypt a secret (output is safe to commit to Git)\nkubeseal --format yaml < db-secret.yaml > db-sealed-secret.yaml\ngit add db-sealed-secret.yaml  # Safe — only the controller can decrypt!\n```\n\n### External Secrets Operator — AWS Secrets Manager Integration\n```yaml\n# ExternalSecret — syncs from AWS Secrets Manager into K8s Secret\napiVersion: external-secrets.io/v1beta1\nkind: ExternalSecret\nmetadata:\n  name: db-credentials\nspec:\n  refreshInterval: 1h           # Auto-rotation: re-syncs every hour\n  secretStoreRef:\n    name: aws-secretsmanager\n    kind: ClusterSecretStore\n  target:\n    name: db-credentials         # Creates/updates this K8s Secret\n    creationPolicy: Owner\n  data:\n    - secretKey: password        # K8s secret key\n      remoteRef:\n        key: prod/order-service/db   # AWS Secrets Manager path\n        property: password            # JSON field in the secret\n```\n\n### Secret Rotation Without Pod Restart\nWhen mounting secrets as **volumes** (not env vars), Kubernetes updates the mounted file automatically when the Secret changes — no pod restart needed. Env vars require pod restart since they are copied at container start.\n\n```\nAWS Secrets Manager ──(rotates)──► External Secrets Operator\n  ──(syncs K8s Secret)──► Volume mount updated in 60s\n  ──► Spring Cloud AWS RefreshScope beans reload ✓\n```",
+      "interviewTip": "The most common interview trap: 'Are Kubernetes Secrets secure?' Correct answer: they are base64-encoded but NOT encrypted by default at rest in etcd. Production requires either EncryptionConfiguration with KMS (AWS KMS, HashiCorp Vault) or External Secrets Operator so the actual secret values never live in the cluster at all.",
+      "references": [
+        {
+          "title": "Kubernetes Secrets",
+          "url": "https://kubernetes.io/docs/concepts/configuration/secret/"
+        },
+        {
+          "title": "External Secrets Operator",
+          "url": "https://external-secrets.io/latest/"
+        },
+        {
+          "title": "Bitnami Sealed Secrets",
+          "url": "https://github.com/bitnami-labs/sealed-secrets"
+        }
+      ],
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "devops-k8s-005",
+      "title": "Kubernetes Resource Management: Requests, Limits & QoS Classes",
+      "category": "DevOps & Cloud",
+      "subcategory": "Kubernetes",
+      "difficulty": "hard",
+      "tags": [
+        "kubernetes",
+        "resources",
+        "qos",
+        "oomkilled",
+        "vpa",
+        "limitrange"
+      ],
+      "summary": "Tune pod CPU and memory requests/limits correctly to prevent OOMKilled crashes, choose the right QoS class, and rightsize workloads with VPA and ResourceQuota.",
+      "content": "## Kubernetes Resource Management\n\n### Requests vs Limits\n\n| Property | Requests | Limits |\n| :--- | :--- | :--- |\n| **Purpose** | Scheduler reservation — guarantees this much capacity | Hard cap — process killed if exceeded |\n| **CPU** | Throttled (slowed) when exceeding, not killed | CPU throttled via cgroups |\n| **Memory** | Used for scheduling decisions | Pod OOMKilled if exceeded |\n\n```yaml\nresources:\n  requests:\n    memory: \"512Mi\"    # Scheduler reserves 512Mi on the node\n    cpu: \"250m\"        # 250 millicores = 0.25 CPU cores\n  limits:\n    memory: \"1Gi\"      # Pod is OOMKilled if it uses > 1Gi\n    cpu: \"1000m\"       # CPU is throttled (not killed) above 1 core\n```\n\n### OOMKilled Debugging\n```bash\n# Check if pod was killed for memory\nkubectl describe pod order-service-xyz | grep -A5 \"Last State\"\n# Output: Reason: OOMKilled\n\n# Check node memory pressure\nkubectl describe node worker-1 | grep -A5 \"Conditions\"\n\n# View actual memory usage vs limits\nkubectl top pods -n production\n```\nFix OOMKilled: Either raise `limits.memory` or profile the app with JVM flags:\n```bash\n-XX:MaxRAMPercentage=75.0   # Use 75% of container memory limit as JVM heap\n```\n\n### QoS Classes — Kubernetes Eviction Order\nWhen a node runs low on memory, Kubernetes evicts pods in this order:\n\n```\n1. BestEffort   — NO requests or limits set → evicted FIRST\n2. Burstable    — requests < limits, or only one set → evicted second\n3. Guaranteed   — requests == limits for ALL containers → LAST to be evicted\n```\n\n```yaml\n# Guaranteed QoS — production databases, critical services\nresources:\n  requests:\n    memory: \"1Gi\"\n    cpu: \"500m\"\n  limits:\n    memory: \"1Gi\"    # Exactly equal to requests\n    cpu: \"500m\"\n```\n\n### LimitRange — Namespace Defaults\n```yaml\napiVersion: v1\nkind: LimitRange\nmetadata:\n  name: default-limits\n  namespace: production\nspec:\n  limits:\n    - type: Container\n      default:            # Applied if container has no limits\n        memory: \"512Mi\"\n        cpu: \"500m\"\n      defaultRequest:     # Applied if container has no requests\n        memory: \"256Mi\"\n        cpu: \"100m\"\n      max:                # Hard ceiling per container\n        memory: \"4Gi\"\n        cpu: \"4\"\n```\n\n### ResourceQuota — Namespace Budget\n```yaml\napiVersion: v1\nkind: ResourceQuota\nmetadata:\n  name: production-quota\n  namespace: production\nspec:\n  hard:\n    requests.cpu: \"20\"\n    requests.memory: \"40Gi\"\n    limits.cpu: \"40\"\n    limits.memory: \"80Gi\"\n    pods: \"100\"\n```\n\n### VPA vs HPA\n- **HPA** (Horizontal): Adds more pod replicas. Good for stateless services.\n- **VPA** (Vertical Pod Autoscaler): Adjusts requests/limits of existing pods. Requires pod restart. Good for stateful apps or when you can't scale horizontally.\n- Do NOT use VPA and HPA with CPU metrics simultaneously — they conflict.",
+      "interviewTip": "When asked about OOMKilled, go beyond 'increase memory'. Mention that Java's default heap sizing does not respect cgroup memory limits in old JDK versions — without -XX:MaxRAMPercentage, the JVM sets heap to 25% of physical node RAM, not the container limit, and can grow beyond the limit triggering OOMKilled. Fixed in JDK 11+.",
+      "references": [
+        {
+          "title": "Kubernetes Resource Management",
+          "url": "https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/"
+        },
+        {
+          "title": "Vertical Pod Autoscaler",
+          "url": "https://github.com/kubernetes/autoscaler/tree/master/vertical-pod-autoscaler"
+        }
+      ],
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "devops-k8s-006",
+      "title": "Blue-Green & Canary Deployments in Kubernetes",
+      "category": "DevOps & Cloud",
+      "subcategory": "Kubernetes",
+      "difficulty": "hard",
+      "tags": [
+        "kubernetes",
+        "blue-green",
+        "canary",
+        "argo-rollouts",
+        "gitops",
+        "argocd",
+        "flagger"
+      ],
+      "summary": "Implement risk-mitigated deployments with Blue-Green Service switching and weighted Canary traffic splitting using Argo Rollouts and Flagger for automated progressive delivery.",
+      "content": "## Advanced Kubernetes Deployment Strategies\n\n### Blue-Green Deployment\nRun two identical environments simultaneously, switch traffic instantaneously:\n```\nv1 (Blue) ──► live-service (selector: version=blue)  ◄── 100% traffic\nv2 (Green) ──► (deployed, tested, idle)\n\n  ──► patch selector to version=green ──►\n\nv1 (Blue) ──► (idle, rollback ready)\nv2 (Green) ──► live-service (selector: version=green) ◄── 100% traffic\n```\n\n```bash\n# Switch traffic from blue to green with zero downtime\nkubectl patch service live-service \\\n  -p '{\"spec\":{\"selector\":{\"version\":\"green\"}}}'\n\n# Rollback in seconds if issues detected\nkubectl patch service live-service \\\n  -p '{\"spec\":{\"selector\":{\"version\":\"blue\"}}}'\n```\n\n### Canary Deployment with Argo Rollouts\n```yaml\napiVersion: argoproj.io/v1alpha1\nkind: Rollout\nmetadata:\n  name: order-service\nspec:\n  replicas: 10\n  strategy:\n    canary:\n      steps:\n        - setWeight: 10       # Step 1: 10% traffic to canary\n        - pause: {duration: 5m}  # Wait 5 min — check metrics\n        - setWeight: 30       # Step 2: 30% traffic\n        - pause: {duration: 10m}\n        - setWeight: 100      # Step 3: Full rollout\n      canaryService: order-service-canary\n      stableService: order-service-stable\n      trafficRouting:\n        nginx:\n          stableIngress: order-service-ingress\n```\n\n### Flagger — Automated Canary with Metrics Gate\nFlagger automatically promotes or rolls back based on Prometheus metrics:\n```yaml\napiVersion: flagger.app/v1beta1\nkind: Canary\nmetadata:\n  name: order-service\nspec:\n  targetRef:\n    apiVersion: apps/v1\n    kind: Deployment\n    name: order-service\n  progressDeadlineSeconds: 600\n  analysis:\n    interval: 1m\n    threshold: 5           # Max 5 failed checks before rollback\n    maxWeight: 50          # Never exceed 50% canary traffic\n    stepWeight: 10\n    metrics:\n      - name: request-success-rate\n        thresholdRange:\n          min: 99           # Rollback if error rate > 1%\n        interval: 1m\n      - name: request-duration\n        thresholdRange:\n          max: 500          # Rollback if p99 latency > 500ms\n        interval: 1m\n```\n\n### Strategy Comparison\n\n| Strategy | Downtime | Resource Cost | Rollback Speed | Risk |\n| :--- | :--- | :--- | :--- | :--- |\n| Recreate | Yes | 1x | Slow | High |\n| RollingUpdate | No | ~1.25x | Medium | Medium |\n| Blue-Green | No | 2x | **Instant** | Low |\n| Canary | No | ~1.1x | Fast (auto) | **Lowest** |\n\n### GitOps with ArgoCD\n```yaml\n# ArgoCD Application — deploy from Git, not kubectl\napiVersion: argoproj.io/v1alpha1\nkind: Application\nmetadata:\n  name: order-service\n  namespace: argocd\nspec:\n  source:\n    repoURL: https://github.com/myorg/k8s-manifests\n    targetRevision: main\n    path: apps/order-service/production\n  destination:\n    server: https://kubernetes.default.svc\n    namespace: production\n  syncPolicy:\n    automated:\n      prune: true       # Delete resources removed from Git\n      selfHeal: true    # Revert manual kubectl changes\n```",
+      "interviewTip": "When asked to compare Blue-Green vs Canary: Blue-Green is simpler but doubles infrastructure cost and gives no production validation window. Canary is the enterprise standard — real user traffic validates the new version before full rollout, and automated metric gates (Flagger) remove human error from the go/no-go decision.",
+      "references": [
+        {
+          "title": "Argo Rollouts",
+          "url": "https://argo-rollouts.readthedocs.io/"
+        },
+        {
+          "title": "Flagger Progressive Delivery",
+          "url": "https://flagger.app/"
+        },
+        {
+          "title": "ArgoCD GitOps",
+          "url": "https://argo-cd.readthedocs.io/"
+        }
+      ],
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "devops-aws-002",
+      "title": "AWS EC2, RDS & S3 for Java Spring Boot",
+      "category": "DevOps & Cloud",
+      "subcategory": "AWS Cloud",
+      "difficulty": "medium",
+      "tags": [
+        "aws",
+        "ec2",
+        "rds",
+        "s3",
+        "spring-boot",
+        "iam",
+        "spring-cloud-aws"
+      ],
+      "summary": "Deploy a Java Spring Boot application on EC2 with RDS PostgreSQL backend and S3 file storage, using IAM roles to eliminate hardcoded credentials.",
+      "content": "## AWS Core Services for Spring Boot Applications\n\n### EC2 Instance Type Selection\n\n| Family | vCPU:RAM ratio | Best For | Example |\n| :--- | :--- | :--- | :--- |\n| **t3/t4g** | Burstable | Dev, low-traffic APIs | t3.medium (2 vCPU, 4GB) |\n| **m5/m6i** | Balanced 1:4 | General Spring Boot apps | m5.xlarge (4 vCPU, 16GB) |\n| **c5/c6i** | Compute 1:2 | CPU-intensive (ML, crypto) | c5.2xlarge (8 vCPU, 16GB) |\n| **r5/r6i** | Memory 1:8 | JVM with large heaps | r5.xlarge (4 vCPU, 32GB) |\n\n### EC2 User Data — Spring Boot Auto-Start\n```bash\n#!/bin/bash\nyum update -y\nyum install -y java-21-amazon-corretto\n\n# Download app from S3 (EC2 IAM role provides access — no credentials!)\naws s3 cp s3://my-deploys/order-service-2.4.0.jar /opt/app/order-service.jar\n\n# Create systemd service\ncat > /etc/systemd/system/order-service.service <<EOF\n[Unit]\nDescription=Order Service\nAfter=network.target\n\n[Service]\nType=simple\nUser=ec2-user\nExecStart=/usr/bin/java -jar /opt/app/order-service.jar \\\\\n  --spring.profiles.active=production\nRestart=always\nEnvironmentFile=/opt/app/env.conf\n\n[Install]\nWantedBy=multi-user.target\nEOF\n\nsystemctl enable order-service\nsystemctl start order-service\n```\n\n### RDS Configuration: Multi-AZ + Read Replicas\n```\nPrimary RDS (AZ-A) ──synchronous──► Standby RDS (AZ-B)\n       │                              (automatic failover ~60s)\n       │ asynchronous\n       ▼\nRead Replica (AZ-C)  ◄── reporting queries, analytics workloads\n```\n\n**Aurora Serverless v2** — scales from 0.5 to 128 ACUs (Aurora Capacity Units) in seconds. No pre-provisioned instances. Ideal for unpredictable workloads.\n\n### Spring Boot RDS Integration\n```yaml\n# application-production.yml\nspring:\n  datasource:\n    url: jdbc:postgresql://${RDS_ENDPOINT}:5432/orders\n    username: ${RDS_USERNAME}\n    driver-class-name: org.postgresql.Driver\n  jpa:\n    properties:\n      hibernate.dialect: org.hibernate.dialect.PostgreSQLDialect\n```\n\n### S3: Presigned URLs & Multipart Upload\n```java\n@Service\npublic class DocumentService {\n    private final S3Presigner presigner;\n\n    // Generate presigned URL — client uploads directly to S3 (bypasses your server!)\n    public String generateUploadUrl(String key) {\n        PutObjectRequest putRequest = PutObjectRequest.builder()\n            .bucket(\"my-documents\")\n            .key(key)\n            .build();\n\n        PresignedPutObjectRequest presigned = presigner.presignPutObject(\n            r -> r.signatureDuration(Duration.ofMinutes(15))\n                  .putObjectRequest(putRequest)\n        );\n        return presigned.url().toString();\n    }\n}\n```\n\n### IAM Role for EC2 — No Hardcoded Credentials!\n```json\n{\n  \"Version\": \"2012-10-17\",\n  \"Statement\": [\n    {\n      \"Effect\": \"Allow\",\n      \"Action\": [\"s3:GetObject\", \"s3:PutObject\"],\n      \"Resource\": \"arn:aws:s3:::my-documents/*\"\n    },\n    {\n      \"Effect\": \"Allow\",\n      \"Action\": [\"secretsmanager:GetSecretValue\"],\n      \"Resource\": \"arn:aws:secretsmanager:us-east-1:123:secret:prod/db*\"\n    }\n  ]\n}\n```\nAttach this IAM role to the EC2 instance profile. The AWS SDK auto-discovers credentials from the EC2 metadata service (169.254.169.254) — no `AWS_ACCESS_KEY_ID` needed.",
+      "interviewTip": "When asked about AWS credentials in Spring Boot: never use access keys in application.properties. Explain the IAM role chain: EC2 instance profile → ECS task role → EKS service account (IRSA). The AWS SDK DefaultCredentialsProvider checks these automatically in order — zero code change needed to move from EC2 to EKS.",
+      "references": [
+        {
+          "title": "AWS EC2 Instance Types",
+          "url": "https://aws.amazon.com/ec2/instance-types/"
+        },
+        {
+          "title": "Spring Cloud AWS",
+          "url": "https://spring.io/projects/spring-cloud-aws"
+        },
+        {
+          "title": "Amazon RDS Multi-AZ",
+          "url": "https://aws.amazon.com/rds/features/multi-az/"
+        }
+      ],
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "devops-aws-003",
+      "title": "AWS Lambda with Java: Cold Start & Performance",
+      "category": "DevOps & Cloud",
+      "subcategory": "AWS Cloud",
+      "difficulty": "hard",
+      "tags": [
+        "aws",
+        "lambda",
+        "java",
+        "cold-start",
+        "snapstart",
+        "graalvm",
+        "serverless"
+      ],
+      "summary": "Conquer Java Lambda cold starts using SnapStart, GraalVM native compilation, and provisioned concurrency while understanding the Lambda execution model and pricing.",
+      "content": "## AWS Lambda with Java: Taming Cold Starts\n\n### The Cold Start Anatomy\nA Java Lambda cold start has three phases (can total 8-15 seconds for Spring Boot):\n```\nPhase 1: Environment Init (~100ms)\n  └── Download deployment package from S3, set up sandbox\n\nPhase 2: JVM Initialization (~500ms - 2s)\n  └── Start JVM, load classes, JIT compile hot paths\n\nPhase 3: Application Init (2s - 12s for Spring Boot!)\n  └── Spring ApplicationContext startup, bean wiring,\n      DB connection pool initialization\n\nPhase 4: Handler Invocation (your business logic)\n  └── First request served — 8-15s total latency!\n```\nSubsequent invocations on **warm** containers: ~50ms (Phase 4 only).\n\n### Solution 1: Lambda SnapStart (Java 21+)\n```yaml\n# Serverless Framework / SAM template\nMyFunction:\n  Type: AWS::Serverless::Function\n  Properties:\n    Runtime: java21\n    SnapStart:\n      ApplyOn: PublishedVersions  # Snapshot after init, restore on cold start\n    Handler: com.example.OrderHandler::handleRequest\n```\nSnapStart takes a memory snapshot after Phase 3 completes. Cold starts restore from snapshot — skipping JVM and app init. Reduces cold start from 10s to **~1s**.\n\n**Caveat**: Random number generators and network connections need re-initialization after restore. Use `@SnapStartEnabled` with `AfterRestore` hook:\n```java\n@Component\npublic class SnapStartHook implements AfterRestoreHook {\n    @Override\n    public void afterRestore(Context context) {\n        // Re-initialize DB connection pool after snapshot restore\n        dataSource.getConnection().close();\n    }\n}\n```\n\n### Solution 2: GraalVM Native Image\n```dockerfile\n# Build native binary — no JVM needed at runtime!\nFROM ghcr.io/graalvm/native-image:21 AS builder\nWORKDIR /app\nCOPY target/*.jar app.jar\nRUN native-image -jar app.jar \\\n    --no-fallback \\\n    -H:+ReportExceptionStackTraces \\\n    order-handler\n\nFROM public.ecr.aws/lambda/provided:al2023\nCOPY --from=builder /app/order-handler ${LAMBDA_RUNTIME_DIR}/bootstrap\n```\nNative image: cold start **< 200ms**. Trade-off: longer build time (5-10 min), reflection configuration required.\n\n### Solution 3: Provisioned Concurrency\n```yaml\n# Pre-warm N instances — eliminates cold starts for predictable load\nMyFunctionAlias:\n  Type: AWS::Lambda::Alias\n  Properties:\n    ProvisionedConcurrencyConfig:\n      ProvisionedConcurrentExecutions: 5  # 5 always-warm instances\n```\nCost: You pay for provisioned concurrency even when idle (~$0.015/GB-hour).\n\n### Lambda Pricing Model\n```\nCost = (Requests × $0.0000002) + (Duration × Memory × $0.0000166667 per GB-second)\n\nMemory also controls CPU allocation:\n  128MB  → 0.08 vCPU\n  1024MB → 0.64 vCPU\n  3008MB → 2 vCPU (max for general purpose)\n  10240MB → ~6 vCPU (max)\n\nOften cheaper to use 1024MB vs 512MB if it halves execution time!\n```\n\n### Spring Boot on Lambda via Lambda Web Adapter\n```java\n// Existing Spring Boot app — zero code changes!\n// Add Lambda Web Adapter as a layer, not a code change\n// Receives HTTP events from API Gateway, proxies to Spring's embedded Tomcat\n@SpringBootApplication\npublic class OrderApplication {\n    public static void main(String[] args) {\n        SpringApplication.run(OrderApplication.class, args);\n    }\n}\n```",
+      "interviewTip": "The key insight interviewers want: Lambda charges per GB-second, so doubling memory from 512MB to 1024MB doubles the memory cost per millisecond — but if it also doubles execution speed, the total cost is the same while latency halves. Always benchmark memory settings with Lambda Power Tuning tool.",
+      "references": [
+        {
+          "title": "AWS Lambda SnapStart",
+          "url": "https://docs.aws.amazon.com/lambda/latest/dg/snapstart.html"
+        },
+        {
+          "title": "AWS Lambda Power Tuning",
+          "url": "https://github.com/alexcasalboni/aws-lambda-power-tuning"
+        },
+        {
+          "title": "Lambda Web Adapter",
+          "url": "https://github.com/awslabs/aws-lambda-web-adapter"
+        }
+      ],
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "devops-aws-004",
+      "title": "AWS SQS, SNS & EventBridge for Event-Driven Java",
+      "category": "DevOps & Cloud",
+      "subcategory": "AWS Cloud",
+      "difficulty": "medium",
+      "tags": [
+        "aws",
+        "sqs",
+        "sns",
+        "eventbridge",
+        "messaging",
+        "event-driven",
+        "spring-boot"
+      ],
+      "summary": "Build reliable event-driven Java applications using SQS for work queues, SNS for fan-out pub/sub, and EventBridge for complex event routing with schema registry.",
+      "content": "## AWS Messaging Services for Java Backends\n\n### SQS: Standard vs FIFO\n\n| Feature | SQS Standard | SQS FIFO |\n| :--- | :--- | :--- |\n| Throughput | Unlimited | 300 msg/s (3000 with batching) |\n| Ordering | Best-effort | Strict FIFO per MessageGroupId |\n| Delivery | At-least-once (duplicates possible) | Exactly-once (deduplication) |\n| Use Case | Email notifications, image processing | Financial transactions, order processing |\n\n### Key SQS Concepts\n```\nProducer ──► SQS Queue\n                │\n                ├── Message received by Consumer A\n                │   └── Visibility Timeout starts (30s default)\n                │       └── Consumer A processes & deletes message\n                │\n                └── If NOT deleted within visibility timeout:\n                    Message becomes visible again → redelivered\n                    After N failures → Dead Letter Queue (DLQ)\n```\n\n```yaml\n# CloudFormation SQS with DLQ\nOrderQueue:\n  Type: AWS::SQS::Queue\n  Properties:\n    QueueName: order-processing\n    VisibilityTimeout: 60          # Give consumer 60s to process\n    MessageRetentionPeriod: 86400  # 24 hours\n    RedrivePolicy:\n      deadLetterTargetArn: !GetAtt OrderDLQ.Arn\n      maxReceiveCount: 3           # Move to DLQ after 3 failures\n\nOrderDLQ:\n  Type: AWS::SQS::Queue\n  Properties:\n    QueueName: order-processing-dlq\n    MessageRetentionPeriod: 1209600  # 14 days to investigate failures\n```\n\n### Spring Boot SQS Consumer\n```java\n@Component\npublic class OrderEventConsumer {\n\n    @SqsListener(value = \"order-processing\", deletionPolicy = SqsMessageDeletionPolicy.ON_SUCCESS)\n    public void processOrder(@Payload OrderEvent event) {\n        // ON_SUCCESS: message deleted only if no exception thrown\n        // Exception → message returns to queue → DLQ after maxReceiveCount\n        orderService.process(event);\n    }\n}\n```\n\n### SNS Fan-Out Pattern\n```\nOrderPlaced Event\n       │\n       ▼\n   SNS Topic (order-events)\n       │\n       ├──► SQS Queue ──► Email Notification Service\n       ├──► SQS Queue ──► Inventory Service\n       ├──► SQS Queue ──► Analytics Pipeline\n       └──► Lambda    ──► Real-time WebSocket Push\n```\nAll subscribers receive the same event independently and at their own pace.\n\n### EventBridge: Event Router with Schema Registry\n```json\n// EventBridge Rule — route OrderPlaced events to specific targets\n{\n  \"source\": [\"com.mycompany.orders\"],\n  \"detail-type\": [\"OrderPlaced\"],\n  \"detail\": {\n    \"totalAmount\": [{ \"numeric\": [\">\", 1000] }]\n  }\n}\n// Target: Lambda for high-value order fraud check\n// Target: SQS for standard fulfillment\n```\n\n### SQS vs Kafka for Java Backends\n\n| Aspect | AWS SQS | Apache Kafka |\n| :--- | :--- | :--- |\n| Message Retention | Up to 14 days | Configurable (unlimited) |\n| Consumer Model | Competing consumers (one message → one consumer) | Consumer groups (replay possible) |\n| Ordering | FIFO queue only | Per-partition ordering |\n| Replay | No (deleted after ack) | Yes (seek to offset) |\n| Management | Fully managed (zero ops) | Self-managed or MSK |\n| Best For | Work queues, tasks | Event sourcing, audit logs, stream processing |",
+      "interviewTip": "The SQS visibility timeout trap: set it shorter than your processing time and you get duplicate processing (two consumers process the same message). Always set visibility timeout to at least 2x your expected processing time plus a buffer. For variable-duration jobs, call ChangeMessageVisibility to extend the timeout dynamically.",
+      "references": [
+        {
+          "title": "Amazon SQS Developer Guide",
+          "url": "https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/"
+        },
+        {
+          "title": "Amazon EventBridge",
+          "url": "https://docs.aws.amazon.com/eventbridge/latest/userguide/"
+        },
+        {
+          "title": "Spring Cloud AWS Messaging",
+          "url": "https://docs.awspring.io/spring-cloud-aws/docs/3.0.0/reference/html/index.html#sqs-support"
+        }
+      ],
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "devops-helm-001",
+      "title": "Helm Charts: Templating & Release Management",
+      "category": "DevOps & Cloud",
+      "subcategory": "CI/CD & Automation",
+      "difficulty": "medium",
+      "tags": [
+        "helm",
+        "kubernetes",
+        "templating",
+        "helmfile",
+        "helm-secrets",
+        "gitops"
+      ],
+      "summary": "Package, configure, and release Kubernetes applications using Helm charts with Go templating, hooks, secrets management, and Helmfile for multi-chart orchestration.",
+      "content": "## Helm: The Kubernetes Package Manager\n\n### Chart Structure\n```\norder-service/\n├── Chart.yaml           # Chart metadata (name, version, appVersion)\n├── values.yaml          # Default configuration values\n├── values-staging.yaml  # Staging overrides\n├── values-prod.yaml     # Production overrides\n├── templates/\n│   ├── deployment.yaml\n│   ├── service.yaml\n│   ├── ingress.yaml\n│   ├── configmap.yaml\n│   ├── hpa.yaml\n│   ├── _helpers.tpl     # Reusable template functions (prefix: _)\n│   └── NOTES.txt        # Post-install instructions\n└── charts/              # Chart dependencies (subcharts)\n```\n\n### Chart.yaml\n```yaml\napiVersion: v2\nname: order-service\ndescription: Order management microservice\ntype: application\nversion: 1.3.0        # Chart version — bump when chart changes\nappVersion: \"2.4.0\"   # Application version — your Docker image tag\ndependencies:\n  - name: postgresql\n    version: \"12.x.x\"\n    repository: https://charts.bitnami.com/bitnami\n    condition: postgresql.enabled\n```\n\n### Go Templating in Deployment.yaml\n```yaml\napiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: {{ include \"order-service.fullname\" . }}\n  labels:\n    {{- include \"order-service.labels\" . | nindent 4 }}\nspec:\n  replicas: {{ .Values.replicaCount }}\n  selector:\n    matchLabels:\n      {{- include \"order-service.selectorLabels\" . | nindent 6 }}\n  template:\n    spec:\n      containers:\n        - name: {{ .Chart.Name }}\n          image: \"{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}\"\n          resources:\n            {{- toYaml .Values.resources | nindent 12 }}\n          {{- if .Values.env }}\n          env:\n            {{- range $key, $value := .Values.env }}\n            - name: {{ $key }}\n              value: {{ $value | quote }}\n            {{- end }}\n          {{- end }}\n```\n\n### values.yaml\n```yaml\nreplicaCount: 3\n\nimage:\n  repository: ghcr.io/myorg/order-service\n  tag: \"\"   # Defaults to Chart.AppVersion\n\nresources:\n  requests:\n    memory: \"512Mi\"\n    cpu: \"250m\"\n  limits:\n    memory: \"1Gi\"\n    cpu: \"1\"\n\nenv:\n  SPRING_PROFILES_ACTIVE: production\n  LOG_LEVEL: INFO\n\ningress:\n  enabled: true\n  host: api.mycompany.com\n  tls: true\n```\n\n### Helm Release Management\n```bash\n# Install (first time)\nhelm install order-service ./order-service \\\n  -f values-prod.yaml \\\n  --set image.tag=2.4.0 \\\n  -n production\n\n# Upgrade (subsequent deploys)\nhelm upgrade order-service ./order-service \\\n  -f values-prod.yaml \\\n  --set image.tag=2.4.1 \\\n  --atomic              # Rollback automatically if upgrade fails\n  --timeout 5m\n\n# Rollback to previous version\nhelm rollback order-service 2    # Roll back to revision 2\n\n# View history\nhelm history order-service -n production\n```\n\n### Helm Hooks\n```yaml\n# templates/db-migrate-job.yaml\napiVersion: batch/v1\nkind: Job\nmetadata:\n  name: db-migration\n  annotations:\n    \"helm.sh/hook\": pre-upgrade,pre-install   # Run BEFORE deployment\n    \"helm.sh/hook-delete-policy\": hook-succeeded\nspec:\n  template:\n    spec:\n      containers:\n        - name: migrate\n          image: flyway/flyway:10\n          command: [\"flyway\", \"migrate\"]\n```\n\n### Helmfile — Multi-Chart Orchestration\n```yaml\n# helmfile.yaml\nrepositories:\n  - name: bitnami\n    url: https://charts.bitnami.com/bitnami\n\nreleases:\n  - name: postgres\n    chart: bitnami/postgresql\n    values: [./infra/postgres-values.yaml]\n\n  - name: order-service\n    chart: ./charts/order-service\n    needs: [postgres]          # Deploy postgres first\n    values:\n      - ./apps/order-service/values-{{ .Environment.Name }}.yaml\n    set:\n      - name: image.tag\n        value: {{ env \"IMAGE_TAG\" }}\n\nenvironments:\n  staging:\n  production:\n```\n```bash\nhelmfile -e production sync   # Deploy all releases to production\nhelmfile -e staging diff      # Preview changes before applying\n```",
+      "interviewTip": "Helm stores release state as Kubernetes Secrets in the target namespace (not locally). This means any team member with kubectl access can run 'helm history' or 'helm rollback' without sharing local state files — critical for team collaboration and disaster recovery.",
+      "references": [
+        {
+          "title": "Helm Documentation",
+          "url": "https://helm.sh/docs/"
+        },
+        {
+          "title": "Helmfile",
+          "url": "https://helmfile.readthedocs.io/"
+        }
+      ],
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "devops-prom-001",
+      "title": "Prometheus & Grafana: Metrics, Alerting & Dashboards",
+      "category": "DevOps & Cloud",
+      "subcategory": "Monitoring & Observability",
+      "difficulty": "hard",
+      "tags": [
+        "prometheus",
+        "grafana",
+        "metrics",
+        "alerting",
+        "micrometer",
+        "spring-boot",
+        "slo"
+      ],
+      "summary": "Instrument Spring Boot with Micrometer, write PromQL queries for golden signals, build Grafana dashboards, and set up SLO-based alerting with AlertManager.",
+      "content": "## Prometheus & Grafana Observability Stack\n\n### Prometheus Data Model\nEvery metric is a time series identified by a metric name + label set:\n```\nhttp_requests_total{method=\"POST\", status=\"200\", service=\"order-service\"} 1234\nhttp_request_duration_seconds_bucket{le=\"0.1\"} 890\nhttp_request_duration_seconds_bucket{le=\"0.5\"} 1100\nhttp_request_duration_seconds_bucket{le=\"+Inf\"} 1234\n```\n\n### Metric Types\n\n| Type | Description | Example |\n| :--- | :--- | :--- |\n| **Counter** | Monotonically increasing (never decreases) | http_requests_total, errors_total |\n| **Gauge** | Can go up and down | jvm_memory_used_bytes, active_connections |\n| **Histogram** | Samples + buckets for quantile calculation | http_request_duration_seconds |\n| **Summary** | Pre-computed quantiles (cannot aggregate across instances) | Use Histogram instead |\n\n### Spring Boot Micrometer Integration\n```xml\n<!-- pom.xml -->\n<dependency>\n    <groupId>io.micrometer</groupId>\n    <artifactId>micrometer-registry-prometheus</artifactId>\n</dependency>\n<dependency>\n    <groupId>org.springframework.boot</groupId>\n    <artifactId>spring-boot-starter-actuator</artifactId>\n</dependency>\n```\n\n```yaml\n# application.yml\nmanagement:\n  endpoints:\n    web:\n      exposure:\n        include: health,info,prometheus\n  metrics:\n    tags:\n      application: order-service    # Auto-added label to ALL metrics\n      environment: production\n    distribution:\n      percentiles-histogram:\n        http.server.requests: true  # Enable histogram for latency percentiles\n```\n\n```java\n// Custom business metric\n@RestController\npublic class OrderController {\n    private final Counter ordersCreated;\n    private final Timer orderProcessingTimer;\n\n    public OrderController(MeterRegistry registry) {\n        this.ordersCreated = Counter.builder(\"orders.created.total\")\n            .description(\"Total orders created\")\n            .tag(\"region\", \"us-east-1\")\n            .register(registry);\n\n        this.orderProcessingTimer = Timer.builder(\"order.processing.duration\")\n            .description(\"Order processing time\")\n            .register(registry);\n    }\n\n    @PostMapping(\"/orders\")\n    public Order createOrder(@RequestBody OrderRequest req) {\n        return orderProcessingTimer.record(() -> {\n            ordersCreated.increment();\n            return orderService.create(req);\n        });\n    }\n}\n```\n\n### Essential PromQL Queries\n```promql\n# Request rate (per second over last 5 minutes)\nrate(http_server_requests_seconds_count{application=\"order-service\"}[5m])\n\n# Error rate percentage\nsum(rate(http_server_requests_seconds_count{status=~\"5..\"}[5m]))\n/\nsum(rate(http_server_requests_seconds_count[5m])) * 100\n\n# p99 latency using histogram\nhistogram_quantile(0.99,\n  sum(rate(http_server_requests_seconds_bucket[5m])) by (le, uri)\n)\n\n# JVM heap usage percentage\njvm_memory_used_bytes{area=\"heap\"} / jvm_memory_max_bytes{area=\"heap\"} * 100\n\n# Orders created in last hour\nincrease(orders_created_total[1h])\n```\n\n### Prometheus Scrape Configuration\n```yaml\n# prometheus.yml\nscrape_configs:\n  - job_name: spring-boot-apps\n    kubernetes_sd_configs:\n      - role: pod\n    relabel_configs:\n      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]\n        action: keep\n        regex: \"true\"\n      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]\n        target_label: __metrics_path__\n        regex: (.+)\n```\n\n### AlertManager Rules — SLO-Based Alerting\n```yaml\n# prometheus-rules.yaml\ngroups:\n  - name: order-service-slos\n    rules:\n      - alert: HighErrorRate\n        expr: |\n          sum(rate(http_server_requests_seconds_count{status=~\"5..\",application=\"order-service\"}[5m]))\n          /\n          sum(rate(http_server_requests_seconds_count{application=\"order-service\"}[5m])) > 0.01\n        for: 2m\n        labels:\n          severity: critical\n        annotations:\n          summary: \"Error rate > 1% for 2 minutes\"\n          runbook: \"https://wiki.internal/runbooks/order-service-errors\"\n\n      - alert: HighP99Latency\n        expr: |\n          histogram_quantile(0.99,\n            sum(rate(http_server_requests_seconds_bucket{application=\"order-service\"}[5m])) by (le)\n          ) > 1.0\n        for: 5m\n        labels:\n          severity: warning\n        annotations:\n          summary: \"p99 latency > 1s\"\n```",
+      "interviewTip": "Histogram vs Summary is a frequent interview question. Key answer: Histograms are calculated server-side (Prometheus) and can be aggregated across multiple instances using histogram_quantile(). Summaries are calculated client-side and cannot be aggregated — if you have 3 replicas, you cannot average their p99 values meaningfully. Always use Histograms for latency in microservices.",
+      "references": [
+        {
+          "title": "Prometheus Documentation",
+          "url": "https://prometheus.io/docs/"
+        },
+        {
+          "title": "Micrometer Documentation",
+          "url": "https://micrometer.io/docs"
+        },
+        {
+          "title": "Grafana Documentation",
+          "url": "https://grafana.com/docs/"
+        }
+      ],
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "devops-elk-001",
+      "title": "ELK Stack: Centralized Logging for Microservices",
+      "category": "DevOps & Cloud",
+      "subcategory": "Monitoring & Observability",
+      "difficulty": "hard",
+      "tags": [
+        "elasticsearch",
+        "logstash",
+        "kibana",
+        "elk",
+        "filebeat",
+        "fluentd",
+        "structured-logging",
+        "correlation-id"
+      ],
+      "summary": "Aggregate, search, and visualize distributed microservice logs with the ELK stack using structured JSON logging, correlation IDs, and Kibana dashboards.",
+      "content": "## ELK Stack for Microservices Logging\n\n### Architecture\n```\nSpring Boot Services (structured JSON logs)\n       │\n       ▼\nFilebeat / Fluentd (log shipper — lightweight, runs as DaemonSet)\n       │\n       ▼\nLogstash (parse, enrich, filter — stateful, heavier)\n       │\n       ▼\nElasticsearch (store, index, search)\n       │\n       ▼\nKibana (visualize, query, dashboard)\n```\n\n### Elasticsearch Internals\n```\nIndex: logs-order-service-2026.10\n  └── Shards (primary + replica)\n       └── Segments (immutable Lucene files)\n            └── Inverted Index:\n                 \"error\" → [doc3, doc7, doc42]\n                 \"OOMKilled\" → [doc7]\n```\n- **Shards**: Horizontal partitions. More shards = more parallelism for search.\n- **Replicas**: Copies of primary shards. Reads can be served from replicas.\n- Rule of thumb: shard size 20-50GB. Over-sharding degrades performance.\n\n### Structured Logging with Logback (Spring Boot)\n```xml\n<!-- pom.xml -->\n<dependency>\n    <groupId>net.logstash.logback</groupId>\n    <artifactId>logstash-logback-encoder</artifactId>\n    <version>7.4</version>\n</dependency>\n```\n\n```xml\n<!-- logback-spring.xml -->\n<configuration>\n  <springProfile name=\"production\">\n    <appender name=\"JSON_STDOUT\" class=\"ch.qos.logback.core.ConsoleAppender\">\n      <encoder class=\"net.logstash.logback.encoder.LogstashEncoder\">\n        <includeMdcKeyName>traceId</includeMdcKeyName>\n        <includeMdcKeyName>spanId</includeMdcKeyName>\n        <includeMdcKeyName>correlationId</includeMdcKeyName>\n      </encoder>\n    </appender>\n    <root level=\"INFO\">\n      <appender-ref ref=\"JSON_STDOUT\" />\n    </root>\n  </springProfile>\n</configuration>\n```\n\nOutput (each log line is valid JSON):\n```json\n{\n  \"@timestamp\": \"2026-10-22T10:23:45.123Z\",\n  \"level\": \"ERROR\",\n  \"logger_name\": \"c.m.order.OrderService\",\n  \"message\": \"Order processing failed\",\n  \"correlationId\": \"abc-123-xyz\",\n  \"traceId\": \"5b8aa5a2d2c872b4\",\n  \"orderId\": \"ORD-9876\",\n  \"exception\": \"PaymentTimeoutException: Payment gateway timeout after 30s\"\n}\n```\n\n### Correlation ID — Trace Requests Across Services\n```java\n@Component\npublic class CorrelationIdFilter extends OncePerRequestFilter {\n    private static final String CORRELATION_HEADER = \"X-Correlation-ID\";\n\n    @Override\n    protected void doFilterInternal(HttpServletRequest req,\n                                    HttpServletResponse res,\n                                    FilterChain chain) throws IOException, ServletException {\n        String correlationId = Optional.ofNullable(req.getHeader(CORRELATION_HEADER))\n            .orElse(UUID.randomUUID().toString());\n\n        MDC.put(\"correlationId\", correlationId);  // Auto-added to all log lines!\n        res.setHeader(CORRELATION_HEADER, correlationId);  // Propagate downstream\n\n        try {\n            chain.doFilter(req, res);\n        } finally {\n            MDC.clear();\n        }\n    }\n}\n```\n\n### Filebeat vs Fluentd vs Logstash\n\n| Shipper | Memory | CPU | Features | Best For |\n| :--- | :--- | :--- | :--- | :--- |\n| **Filebeat** | ~50MB | Very low | Tail files, basic filters | K8s DaemonSet, high-volume |\n| **Fluentd** | ~40MB | Low | Rich plugins (300+), buffering | Kubernetes native (Fluent Bit) |\n| **Logstash** | 1-2GB | High | Full grok parsing, enrichment | Complex transformations |\n\n### Logstash Pipeline with Grok\n```ruby\n# logstash.conf\nfilter {\n  if [message] =~ /^\\{/ {\n    json { source => \"message\" }   # Parse JSON logs directly\n  } else {\n    grok {\n      match => {\n        \"message\" => \"%{TIMESTAMP_ISO8601:timestamp} %{LOGLEVEL:level} %{GREEDYDATA:msg}\"\n      }\n    }\n  }\n  mutate {\n    add_field => { \"environment\" => \"%{[@metadata][environment]}\" }\n  }\n}\n```\n\n### Kibana Query Language (KQL)\n```\n# Find all errors for a specific correlation ID\ncorrelationId: \"abc-123-xyz\" AND level: ERROR\n\n# Find slow requests (custom field from structured log)\nresponseTimeMs > 2000 AND service: order-service\n\n# Regex search\nmessage: /PaymentTimeout.*/\n```\n\n### Log Levels in Production\n- **INFO**: Business events (order created, payment processed). Always on.\n- **DEBUG**: Detailed execution flow. Enable dynamically via Spring Boot Actuator:\n```bash\ncurl -X POST http://localhost:8080/actuator/loggers/com.mycompany \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"configuredLevel\": \"DEBUG\"}'\n# Reset after debugging — DEBUG generates 10-100x more log volume!\n```",
+      "interviewTip": "When asked about logging in microservices, lead with correlation IDs — they are the single most important observability pattern. Without a correlation ID propagated via HTTP headers and MDC, tracing a single user request across 10 microservices in Kibana is impossible. Also mention that DEBUG should never run in production continuously — it floods Elasticsearch and causes disk pressure.",
+      "references": [
+        {
+          "title": "Elastic Stack Documentation",
+          "url": "https://www.elastic.co/guide/index.html"
+        },
+        {
+          "title": "Logstash Logback Encoder",
+          "url": "https://github.com/logfellow/logstash-logback-encoder"
+        },
+        {
+          "title": "Spring Boot Logging",
+          "url": "https://docs.spring.io/spring-boot/docs/current/reference/html/features.html#features.logging"
+        }
+      ],
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    }
+  ]
+}

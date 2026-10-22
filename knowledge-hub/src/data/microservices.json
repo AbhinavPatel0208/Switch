@@ -1,0 +1,561 @@
+{
+  "category": "Microservices",
+  "icon": "HiCube",
+  "color": "#8b5cf6",
+  "subcategories": [
+    "Resilience & Fault Tolerance",
+    "Distributed Patterns",
+    "API Gateway & Inter-Service",
+    "Observability & Tracing",
+    "Service Communication",
+    "Patterns & Architecture",
+    "Resilience & Reliability",
+    "Security & Configuration",
+    "Testing & Observability"
+  ],
+  "topics": [
+    {
+      "id": "ms-res-001",
+      "title": "Circuit Breaker, Bulkhead & Rate Limiting (Resilience4j)",
+      "category": "Microservices",
+      "subcategory": "Resilience & Fault Tolerance",
+      "difficulty": "medium",
+      "tags": [
+        "circuit-breaker",
+        "resilience4j",
+        "bulkhead",
+        "fault-tolerance"
+      ],
+      "summary": "Prevent cascading failures in microservices with stateful Circuit Breakers, thread pool bulkheads, and fallback mechanisms.",
+      "content": "## Microservice Resilience Patterns with Resilience4j\n\n### The Circuit Breaker State Machine\n\n```\n              Success rate normal\n      ┌─────► [ CLOSED ] ◄─────────┐\n      │          │                 │\n      │     Failure rate > 50%     │ Wait duration elapsed\n      │          │                 │\n      │          ▼                 │\n      │       [ OPEN ] ────────► [ HALF-OPEN ]\n      │    (Fail fast,          (Allow 5 trial calls)\n      │     call fallback)         │\n      │                            │\n      └────────────────────────────┘\n```\n\n### Thread Isolation: The Bulkhead Pattern\nPrevents a slow or dying downstream service from exhausting all worker threads in your servlet container (e.g. Tomcat's 200 threads):\n- **Semaphore Bulkhead**: Limits concurrent calls to a numeric threshold without creating new threads.\n- **ThreadPool Bulkhead**: Assigns a dedicated thread pool and queue per external service, strictly containing thread starvation.\n\n### Production Resilience4j Integration in Spring Boot\n\n```java\n@Service\npublic class PaymentGatewayService {\n\n    @CircuitBreaker(name = \"paymentClient\", fallbackMethod = \"processFallback\")\n    @Bulkhead(name = \"paymentClient\", type = Bulkhead.Type.THREADPOOL)\n    @Retry(name = \"paymentClient\")\n    public CompletableFuture<PaymentReceipt> charge(PaymentRequest request) {\n        return CompletableFuture.supplyAsync(() -> externalPaymentApi.execute(request));\n    }\n\n    public CompletableFuture<PaymentReceipt> processFallback(PaymentRequest request, Throwable ex) {\n        log.warn(\"Payment downstream unavailable. Queuing for async reconciliation. Reason: {}\", ex.getMessage());\n        outboxQueue.save(request);\n        return CompletableFuture.completedFuture(PaymentReceipt.deferred(request.getId()));\n    }\n}\n```\n\n### Order of Execution for Resilience Decorators\n```\nRetry ──► CircuitBreaker ──► RateLimiter ──► TimeLimiter ──► Bulkhead ──► Business Logic\n(Outer)                                                                  (Inner)\n```",
+      "references": [
+        {
+          "title": "Resilience4j Documentation",
+          "url": "https://resilience4j.readme.io/docs"
+        }
+      ],
+      "interviewTip": "Highlight the difference between COUNT_BASED (evaluates last N calls) and TIME_BASED sliding windows (evaluates calls in last N seconds).",
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "ms-pat-001",
+      "title": "Saga Pattern: Choreography vs Orchestration",
+      "category": "Microservices",
+      "subcategory": "Distributed Patterns",
+      "difficulty": "hard",
+      "tags": [
+        "saga-pattern",
+        "distributed-transactions",
+        "compensating-transactions",
+        "camunda",
+        "kafka"
+      ],
+      "summary": "Maintain data consistency across microservices without 2PC using local transactions and compensating rollbacks.",
+      "content": "## Saga Pattern for Distributed Transactions\n\n### Why 2-Phase Commit (2PC) Fails in Microservices\n2PC requires all participating databases to hold locks until every node votes. If one service is slow, all database connections remain blocked. It violates microservice autonomy and scalability.\n\n### The Saga Architecture\nA Saga is a sequence of **local transactions**. Each transaction updates data in a single service and publishes an event. If a step fails, the Saga executes **compensating transactions** in reverse to undo the preceding steps.\n\n```\nForward Execution:\n[Create Order] ──► [Charge Payment] ──► [Reserve Inventory] ──► [Complete]\n\nCompensating Rollback (when Inventory fails):\n[Cancel Order] ◄── [Refund Payment] ◄── [Inventory Out of Stock!]\n```\n\n### Choreography vs Orchestration\n\n| Attribute | Choreography (Event-Driven) | Orchestration (Command-Driven) |\n| :--- | :--- | :--- |\n| **Coordination** | Decentralized via Kafka domain events | Centralized coordinator (e.g. Camunda, Temporal) |\n| **Coupling** | Loose coupling | Services depend on orchestrator interface |\n| **Complexity** | Difficult to track flow (cyclic dependencies) | Clear single source of workflow state machine |\n| **Best For** | Simple workflows (2-4 services) | Complex, multi-branch business workflows |",
+      "references": [
+        {
+          "title": "Chris Richardson: Pattern: Saga",
+          "url": "https://microservices.io/patterns/data/saga.html"
+        }
+      ],
+      "interviewTip": "Emphasize that Compensating Transactions must be Idempotent because network retries can cause compensation events to execute multiple times.",
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "ms-api-001",
+      "title": "Spring Cloud Gateway & Backend-For-Frontend (BFF) Pattern",
+      "category": "Microservices",
+      "subcategory": "API Gateway & Inter-Service",
+      "difficulty": "medium",
+      "tags": [
+        "api-gateway",
+        "spring-cloud-gateway",
+        "bff",
+        "routing",
+        "rate-limiting"
+      ],
+      "summary": "Centralize cross-cutting concerns: Netty reactive routing, JWT validation filters, request decoration, and BFF design.",
+      "content": "## API Gateway & Backend-For-Frontend (BFF)\n\n### Why API Gateway?\nInstead of mobile and web clients calling 20 individual microservices directly:\n1. **Single Entry Point**: Shields internal microservice topology.\n2. **Cross-Cutting Concerns**: Authentication, Rate Limiting, SSL termination, and CORS handled in one place.\n3. **Protocol Translation**: Translates external HTTP/1.1 REST or WebSockets to internal gRPC or Kafka streams.\n\n### Reactive Spring Cloud Gateway Configuration\nBuilt on Project Reactor and Netty (non-blocking event loop):\n\n```yaml\nspring:\n  cloud:\n    gateway:\n      routes:\n        - id: order-service-route\n          uri: lb://ORDER-SERVICE # Client-side load balancing via Eureka / Consul\n          predicates:\n            - Path=/api/v1/orders/**\n          filters:\n            - StripPrefix=2\n            - AddRequestHeader=X-Gateway-Timestamp, #{T(System).currentTimeMillis()}\n            - name: RequestRateLimiter\n              args:\n                redis-rate-limiter.replenishRate: 50\n                redis-rate-limiter.burstCapacity: 100\n                key-resolver: \"#{@userKeyResolver}\"\n```\n\n### The Backend-for-Frontend (BFF) Pattern\nRather than building a single massive monolithic gateway for all clients:\n- **Mobile BFF**: Returns lightweight payloads tailored for low mobile bandwidth (strips unneeded JSON fields).\n- **Web BFF**: Aggregates multiple API calls into dense payloads for desktop browsers.",
+      "references": [
+        {
+          "title": "Spring Cloud Gateway Docs",
+          "url": "https://docs.spring.io/spring-cloud-gateway/reference/"
+        }
+      ],
+      "interviewTip": "Highlight that Spring Cloud Gateway is built on Netty (reactive non-blocking), completely replacing old blocking Netflix Zuul 1.x servlet architecture.",
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "ms-obs-001",
+      "title": "Distributed Tracing with OpenTelemetry, TraceID & SpanID Propagation",
+      "category": "Microservices",
+      "subcategory": "Observability & Tracing",
+      "difficulty": "hard",
+      "tags": [
+        "opentelemetry",
+        "distributed-tracing",
+        "jaeger",
+        "w3c-trace-context",
+        "micrometer"
+      ],
+      "summary": "Diagnose cross-service latency regressions by propagating W3C Trace Context, Span IDs, and MDC logging across threads.",
+      "content": "## Distributed Tracing & OpenTelemetry\n\n### Trace vs Span Architecture\n- **Trace**: Represents the entire end-to-end journey of a single user request across 10 microservices. Identified by a unique **`TraceId`**.\n- **Span**: Represents a single unit of work within a service (e.g. an HTTP call, SQL query, Kafka publish). Identified by a unique **`SpanId`** and parent **`ParentSpanId`**.\n\n```\n[Trace ID: 4bf92f3577b34da6a3ce929d0e0e4736]\n├── [Span 1: API Gateway (25ms)]\n│   └── [Span 2: Order Service (80ms)]\n│       ├── [Span 3: PostgreSQL Query 'SELECT *' (12ms)]\n│       └── [Span 4: Payment Client Feign (65ms)]\n│           └── [Span 5: Payment Gateway Service (50ms)]\n```\n\n### W3C Trace Context Standard (`traceparent` header)\nServices communicate trace context over HTTP using the standardized `traceparent` header:\n```http\ntraceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01\n              │  └────────── Trace ID ──────────┘ └─ Span ID ─┘ └Flags\n              Version\n```\n\n### Correlating Logs via SLF4J MDC (Mapped Diagnostic Context)\nSpring Boot 3 + Micrometer Tracing automatically populates MDC values so every log line contains the TraceId:\n\n```xml\n<!-- logback-spring.xml -->\n<pattern>%d{yyyy-MM-dd HH:mm:ss} [%thread] [TraceId=%X{traceId}] %-5level %logger{36} - %msg%n</pattern>\n```\nNow pasting a single `TraceId` into Grafana Loki or ELK pulls up logs from all 10 microservices simultaneously!",
+      "references": [
+        {
+          "title": "W3C Trace Context Specification",
+          "url": "https://www.w3.org/TR/trace-context/"
+        },
+        {
+          "title": "OpenTelemetry Java Documentation",
+          "url": "https://opentelemetry.io/docs/languages/java/"
+        }
+      ],
+      "interviewTip": "Explain MDC context propagation across asynchronous thread boundaries (CompletableFuture, Executors): MDC is backed by ThreadLocal, so async executors require ContextSnapshot or TaskDecorator.",
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "ms-sd-001",
+      "title": "Service Discovery: Eureka & Client-Side Load Balancing",
+      "category": "Microservices",
+      "subcategory": "Service Communication",
+      "difficulty": "medium",
+      "tags": [
+        "service-discovery",
+        "eureka",
+        "spring-cloud",
+        "load-balancing",
+        "consul"
+      ],
+      "summary": "Enable dynamic service-to-service calls using Eureka registry, heartbeat-based health checks, and client-side load balancing via Spring Cloud LoadBalancer.",
+      "content": "## Service Discovery: Eureka & Client-Side Load Balancing\n\n### Why Static Service URLs Fail\nIn a dynamic cloud environment, service instances scale up/down, crash, and restart with new IP addresses constantly. Hardcoding `http://payment-service:8081` breaks the moment that instance dies.\n\n### Registry-Based vs DNS-Based Discovery\n\n```\n┌─────────────────────────────────────────────────┐\n│              Service Registry (Eureka)           │\n│  payment-service → [10.0.1.5:8081, 10.0.1.6:8081]│\n│  order-service   → [10.0.1.9:8080]              │\n└──────────┬─────────────────────────────┬────────┘\n           │ Register + Heartbeat        │ Fetch Registry\n           ▼                             ▼\n    [payment-service]            [order-service]\n    (every 30s heartbeat)        (cache refreshed every 30s)\n```\n\n**Registry-based** (Eureka, Consul): Services self-register with metadata. Clients fetch the full registry and cache it locally. Load balancing decision stays on the client.\n\n**DNS-based** (Kubernetes Service DNS): `payment-service.default.svc.cluster.local` resolves to a ClusterIP. kube-proxy handles routing. Simpler but less flexible.\n\n### Eureka Server Setup\n\n```java\n@SpringBootApplication\n@EnableEurekaServer\npublic class DiscoveryServerApplication {\n    public static void main(String[] args) {\n        SpringApplication.run(DiscoveryServerApplication.class, args);\n    }\n}\n```\n\n```yaml\n# application.yml - Eureka Server\nserver:\n  port: 8761\neureka:\n  client:\n    register-with-eureka: false  # server doesn't register itself\n    fetch-registry: false\n  server:\n    enable-self-preservation: true   # don't evict during network partition\n    eviction-interval-timer-in-ms: 10000\n```\n\n### Eureka Client Registration\n\n```yaml\n# payment-service application.yml\nspring:\n  application:\n    name: payment-service   # registered name in Eureka\neureka:\n  client:\n    service-url:\n      defaultZone: http://localhost:8761/eureka/\n  instance:\n    lease-renewal-interval-in-seconds: 30   # heartbeat frequency\n    lease-expiration-duration-in-seconds: 90  # evict if no heartbeat\n    prefer-ip-address: true\n```\n\n### Spring Cloud LoadBalancer (replaces Ribbon)\n\n```java\n@Configuration\npublic class WebClientConfig {\n\n    @Bean\n    @LoadBalanced  // intercepts calls and resolves via registry\n    public WebClient.Builder loadBalancedWebClientBuilder() {\n        return WebClient.builder();\n    }\n}\n\n@Service\npublic class OrderService {\n    private final WebClient.Builder webClientBuilder;\n\n    public PaymentResponse chargePayment(PaymentRequest req) {\n        return webClientBuilder.build()\n            .post()\n            .uri(\"http://payment-service/api/payments\")  // logical name, not IP\n            .bodyValue(req)\n            .retrieve()\n            .bodyToMono(PaymentResponse.class)\n            .block();\n    }\n}\n```\n\n### Self-Preservation Mode\nIf Eureka server stops receiving heartbeats from many instances simultaneously (network partition), it enters **self-preservation mode** — it stops evicting entries assuming the issue is network-wide, not service death. Controlled via `enable-self-preservation: true`. Disable in dev to get fast eviction during testing.\n\n### Client-Side vs Server-Side Load Balancing\n\n| Approach | Client-Side (Ribbon/SCL) | Server-Side (AWS ALB, nginx) |\n|----------|--------------------------|------------------------------|\n| Registry fetch | Client fetches & caches | Proxy fetches |\n| Latency | Lower (no extra hop) | Extra hop to LB |\n| Flexibility | Custom algorithms | Fixed algorithms |\n| Visibility | Client sees all instances | Opaque |\n| Failure | Client handles directly | LB handles |",
+      "references": [
+        {
+          "title": "Spring Cloud Netflix Eureka Docs",
+          "url": "https://docs.spring.io/spring-cloud-netflix/docs/current/reference/html/"
+        },
+        {
+          "title": "Spring Cloud LoadBalancer",
+          "url": "https://docs.spring.io/spring-cloud-commons/docs/current/reference/html/#spring-cloud-loadbalancer"
+        }
+      ],
+      "interviewTip": "When asked about Ribbon vs Spring Cloud LoadBalancer: Ribbon is in maintenance mode since 2021. Spring Cloud LoadBalancer is the modern reactive replacement. Mention that in Kubernetes environments, DNS-based discovery via kube-dns is often preferred over Eureka because the platform handles registration automatically.",
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "ms-feign-001",
+      "title": "Feign Client: Interceptors, Fallbacks & Error Decoding",
+      "category": "Microservices",
+      "subcategory": "Service Communication",
+      "difficulty": "medium",
+      "tags": [
+        "feign",
+        "spring-cloud-openfeign",
+        "interceptor",
+        "error-decoder",
+        "resilience4j"
+      ],
+      "summary": "Build declarative HTTP clients with Feign — propagate auth headers via RequestInterceptor, map errors with ErrorDecoder, and integrate Resilience4j fallbacks.",
+      "content": "## Feign Client: Interceptors, Fallbacks & Error Decoding\n\n### What Is Feign?\nFeign (Spring Cloud OpenFeign) lets you define HTTP client interfaces declaratively. No RestTemplate boilerplate — just an annotated interface and Spring wires the implementation.\n\n```java\n@FeignClient(\n    name = \"inventory-service\",\n    url = \"${services.inventory.url}\",  // or use Eureka: name = \"INVENTORY-SERVICE\"\n    fallbackFactory = InventoryClientFallbackFactory.class\n)\npublic interface InventoryClient {\n\n    @GetMapping(\"/api/inventory/{productId}\")\n    InventoryResponse getStock(@PathVariable(\"productId\") String productId);\n\n    @PostMapping(\"/api/inventory/reserve\")\n    ReservationResponse reserve(@RequestBody ReservationRequest request);\n}\n```\n\n### RequestInterceptor: Propagating Auth Headers\nEvery outgoing Feign call automatically gets the JWT from the incoming request:\n\n```java\n@Component\npublic class JwtPropagationInterceptor implements RequestInterceptor {\n\n    @Override\n    public void apply(RequestTemplate template) {\n        // Pull JWT from SecurityContext (set by gateway filter)\n        Authentication auth = SecurityContextHolder.getContext().getAuthentication();\n        if (auth instanceof JwtAuthenticationToken jwtToken) {\n            String bearerToken = jwtToken.getToken().getTokenValue();\n            template.header(HttpHeaders.AUTHORIZATION, \"Bearer \" + bearerToken);\n        }\n        // Propagate correlation ID for distributed tracing\n        String correlationId = MDC.get(\"traceId\");\n        if (correlationId != null) {\n            template.header(\"X-Correlation-ID\", correlationId);\n        }\n    }\n}\n```\n\n### ErrorDecoder: Custom Exception Mapping\nMap downstream HTTP error codes to meaningful domain exceptions:\n\n```java\n@Component\npublic class InventoryErrorDecoder implements ErrorDecoder {\n    private final ErrorDecoder defaultDecoder = new Default();\n\n    @Override\n    public Exception decode(String methodKey, Response response) {\n        return switch (response.status()) {\n            case 404 -> new ProductNotFoundException(\"Product not found: \" + methodKey);\n            case 409 -> new InsufficientStockException(\"Stock conflict during reservation\");\n            case 503 -> new ServiceUnavailableException(\"Inventory service is down\");\n            default  -> defaultDecoder.decode(methodKey, response);\n        };\n    }\n}\n```\n\n### FallbackFactory: Resilience4j Integration\nFallbackFactory receives the exception, enabling context-aware fallback logic:\n\n```java\n@Component\npublic class InventoryClientFallbackFactory\n        implements FallbackFactory<InventoryClient> {\n\n    @Override\n    public InventoryClient create(Throwable cause) {\n        return new InventoryClient() {\n            @Override\n            public InventoryResponse getStock(String productId) {\n                log.warn(\"Inventory fallback for productId={}, cause={}\",\n                         productId, cause.getMessage());\n                return InventoryResponse.unavailable(productId);\n            }\n\n            @Override\n            public ReservationResponse reserve(ReservationRequest request) {\n                throw new ServiceUnavailableException(\"Cannot reserve: inventory offline\");\n            }\n        };\n    }\n}\n```\n\n### Feign Logging & Timeout Configuration\n\n```yaml\nfeign:\n  client:\n    config:\n      inventory-service:\n        connect-timeout: 2000    # 2s to establish TCP connection\n        read-timeout: 5000       # 5s to read response\n        logger-level: FULL       # NONE | BASIC | HEADERS | FULL\n  circuitbreaker:\n    enabled: true\n\nlogging:\n  level:\n    com.example.clients.InventoryClient: DEBUG\n```\n\n### Logging Levels Explained\n- **NONE**: No logging (production default)\n- **BASIC**: Request method, URL, response status, execution time\n- **HEADERS**: BASIC + request/response headers\n- **FULL**: HEADERS + request/response body (never use in production — logs PII)",
+      "references": [
+        {
+          "title": "Spring Cloud OpenFeign Reference",
+          "url": "https://docs.spring.io/spring-cloud-openfeign/docs/current/reference/html/"
+        }
+      ],
+      "interviewTip": "Feign runs synchronously and blocks a thread per call by default. For reactive stacks, prefer WebClient with @LoadBalanced. Also clarify the difference between Fallback (static class) and FallbackFactory (receives the cause exception) — factories are essential for logging the actual error that triggered the fallback.",
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "ms-grpc-001",
+      "title": "gRPC vs REST vs GraphQL in Microservices",
+      "category": "Microservices",
+      "subcategory": "Service Communication",
+      "difficulty": "hard",
+      "tags": [
+        "grpc",
+        "rest",
+        "graphql",
+        "protobuf",
+        "http2",
+        "api-design"
+      ],
+      "summary": "Choose the right inter-service protocol: gRPC for high-throughput internal services, REST for external APIs, and GraphQL for flexible client-driven queries.",
+      "content": "## gRPC vs REST vs GraphQL in Microservices\n\n### Protocol Comparison\n\n```\n┌──────────────┬──────────────────┬──────────────────┬─────────────────┐\n│ Attribute    │ gRPC             │ REST             │ GraphQL          │\n├──────────────┼──────────────────┼──────────────────┼─────────────────┤\n│ Protocol     │ HTTP/2           │ HTTP/1.1 or 2    │ HTTP/1.1 or 2   │\n│ Serialization│ Protobuf (binary)│ JSON/XML (text)  │ JSON (text)     │\n│ Type Safety  │ Strong (.proto)  │ None (by default)│ Schema (SDL)    │\n│ Streaming    │ Bidirectional    │ SSE/WebSockets   │ Subscriptions   │\n│ Debugging    │ Hard (binary)    │ Easy (curl)      │ Moderate        │\n│ Browser      │ Not native       │ Native           │ Native          │\n│ Code Gen     │ Mandatory        │ Optional (OAS)   │ Optional        │\n└──────────────┴──────────────────┴──────────────────┴─────────────────┘\n```\n\n### gRPC: Protocol Buffers & HTTP/2\n\n**Protobuf schema** (`payment.proto`):\n```protobuf\nsyntax = \"proto3\";\npackage payment;\n\nservice PaymentService {\n  rpc ChargeCard (ChargeRequest) returns (ChargeResponse);\n  rpc StreamTransactions (StreamRequest) returns (stream Transaction);\n}\n\nmessage ChargeRequest {\n  string order_id = 1;\n  int64 amount_cents = 2;\n  string currency = 3;\n}\n\nmessage ChargeResponse {\n  string transaction_id = 1;\n  bool success = 2;\n  string failure_reason = 3;\n}\n```\n\n**Spring Boot gRPC server** (using `grpc-spring-boot-starter`):\n```java\n@GrpcService\npublic class PaymentGrpcService extends PaymentServiceGrpc.PaymentServiceImplBase {\n\n    @Override\n    public void chargeCard(ChargeRequest req, StreamObserver<ChargeResponse> observer) {\n        try {\n            String txId = paymentProcessor.charge(req.getOrderId(), req.getAmountCents());\n            observer.onNext(ChargeResponse.newBuilder()\n                .setTransactionId(txId)\n                .setSuccess(true)\n                .build());\n            observer.onCompleted();\n        } catch (PaymentException e) {\n            observer.onError(Status.INTERNAL\n                .withDescription(e.getMessage())\n                .asRuntimeException());\n        }\n    }\n}\n```\n\n### HTTP/2 Advantages for gRPC\n- **Multiplexing**: Multiple RPC calls share one TCP connection (no head-of-line blocking)\n- **Header compression** (HPACK): Eliminates repeated JSON overhead\n- **Binary framing**: Protobuf is 3–10x smaller than equivalent JSON\n- **Server push**: Bidirectional streaming without polling\n\n### When to Use Each\n\n**gRPC**: Internal service-to-service calls needing high throughput, low latency, and strong contracts. Ideal for data pipelines, ML inference endpoints, and real-time streaming (stock prices, IoT telemetry).\n\n**REST**: External public APIs consumed by third parties, mobile apps, or browsers. Maximum tooling compatibility. Use when discoverability and simplicity matter more than performance.\n\n**GraphQL**: Client-driven aggregation layers (mobile BFF) where different clients need different data shapes. Eliminates over-fetching and under-fetching. Watch for N+1 query problem — always use DataLoader.\n\n### GraphQL N+1 Problem\n```\nQuery: { orders { customer { name } } }  // 1 query for orders\n→ For each order, fetch customer separately  // N queries for N customers\nFix: DataLoader batches N customer lookups into 1 SQL IN clause\n```",
+      "references": [
+        {
+          "title": "gRPC Java Quickstart",
+          "url": "https://grpc.io/docs/languages/java/quickstart/"
+        },
+        {
+          "title": "GraphQL DataLoader",
+          "url": "https://github.com/graphql-java/java-dataloader"
+        }
+      ],
+      "interviewTip": "A common interview curveball: 'Can browsers call gRPC directly?' — No, not without gRPC-Web proxy (Envoy transcodes HTTP/1.1 → gRPC HTTP/2). This limitation is why REST remains dominant for external-facing APIs. Also mention that gRPC's schema evolution (adding new fields is backward-compatible by default in proto3) is a major operational advantage over REST.",
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "ms-event-001",
+      "title": "Event-Driven Architecture: Domain Events vs Integration Events",
+      "category": "Microservices",
+      "subcategory": "Patterns & Architecture",
+      "difficulty": "hard",
+      "tags": [
+        "event-driven",
+        "domain-events",
+        "integration-events",
+        "kafka",
+        "schema-registry",
+        "choreography"
+      ],
+      "summary": "Distinguish domain events (intra-bounded-context state changes) from integration events (cross-service contracts) and manage schema evolution safely.",
+      "content": "## Event-Driven Architecture: Domain Events vs Integration Events\n\n### Two Types of Events\n\n```\n┌─────────────────────────────────────────────┐\n│          Order Bounded Context              │\n│                                             │\n│  [Order Aggregate]                          │\n│       │ raises                              │\n│       ▼                                     │\n│  [OrderPlaced DomainEvent]  ◄─── Internal   │\n│       │ converted to                        │\n└───────┼─────────────────────────────────────┘\n        │ published as\n        ▼\n  [OrderCreatedEvent]  ◄─── Integration Event\n  (Kafka topic: orders.created)\n        │\n        ├──► Payment Service (subscribes)\n        └──► Inventory Service (subscribes)\n```\n\n**Domain Events**: Represent something meaningful that happened within a bounded context. Private to the domain, rich with business meaning, may contain aggregate state. Raised synchronously within a transaction.\n\n**Integration Events**: Cross-service contracts published to a message broker. Must be versioned, minimal, and stable. Treated like a public API — breaking changes require a migration strategy.\n\n### Domain Event in Spring (ApplicationEventPublisher)\n\n```java\n@Entity\npublic class Order {\n    @Transient\n    private final List<DomainEvent> domainEvents = new ArrayList<>();\n\n    public void place(List<OrderItem> items) {\n        // Business logic\n        this.status = OrderStatus.PENDING;\n        domainEvents.add(new OrderPlacedDomainEvent(this.id, this.customerId, items));\n    }\n\n    @DomainEvents\n    public List<DomainEvent> domainEvents() { return domainEvents; }\n\n    @AfterDomainEventPublication\n    public void clearDomainEvents() { domainEvents.clear(); }\n}\n\n@Component\npublic class OrderPlacedEventHandler {\n    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)\n    public void on(OrderPlacedDomainEvent event) {\n        // Convert domain event → integration event and publish to Kafka\n        // Runs AFTER the DB transaction commits — safe!\n        kafkaTemplate.send(\"orders.created\", new OrderCreatedEvent(event.getOrderId()));\n    }\n}\n```\n\n### Schema Evolution with Confluent Schema Registry\nIntegration events must evolve without breaking consumers:\n\n```json\n// v1 OrderCreatedEvent\n{ \"orderId\": \"123\", \"customerId\": \"c-456\", \"totalAmount\": 99.99 }\n\n// v2 - BACKWARD COMPATIBLE: added optional field with default\n{ \"orderId\": \"123\", \"customerId\": \"c-456\", \"totalAmount\": 99.99, \"currency\": \"USD\" }\n\n// BREAKING CHANGE (avoid!): removed field, changed type\n{ \"orderId\": 123 }  // int instead of string — breaks old consumers!\n```\n\n**Compatibility modes**:\n- **BACKWARD**: New schema can read old messages (consumer upgrades first)\n- **FORWARD**: Old schema can read new messages (producer upgrades first)\n- **FULL**: Both directions — safest, most restrictive\n\n### Choreography vs Orchestration (Revisited with Code)\n\n**Choreography** — each service reacts to events independently:\n```\nOrderCreated → (Payment charges) → PaymentSucceeded → (Inventory reserves) → InventoryReserved → Done\n```\nProblem: Hard to see the full workflow. 'Where is my order?' requires querying 4 services.\n\n**Orchestration** — central saga orchestrator issues commands:\n```java\n@SagaOrchestrator\npublic class PlaceOrderSaga {\n    @StartSaga\n    @SagaEventHandler(associationProperty = \"orderId\")\n    public void handle(OrderCreatedEvent event) {\n        commandGateway.send(new ChargePaymentCommand(event.getOrderId(), event.getAmount()));\n    }\n    // ... compensating handlers for payment failure\n}\n```",
+      "references": [
+        {
+          "title": "Vaughn Vernon: Implementing Domain-Driven Design",
+          "url": "https://www.amazon.com/Implementing-Domain-Driven-Design-Vaughn-Vernon/dp/0321834577"
+        },
+        {
+          "title": "Confluent Schema Registry",
+          "url": "https://docs.confluent.io/platform/current/schema-registry/index.html"
+        }
+      ],
+      "interviewTip": "A great differentiator: explain @TransactionalEventListener with phase = AFTER_COMMIT. Publishing a Kafka event before the DB commits risks an inconsistency — the payment charged but the order was never persisted. The Transactional Outbox Pattern is the production-grade solution: insert the event into an 'outbox' table in the same transaction, then a relay process publishes to Kafka.",
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "ms-idem-001",
+      "title": "Idempotency Keys & At-Least-Once Delivery",
+      "category": "Microservices",
+      "subcategory": "Resilience & Reliability",
+      "difficulty": "hard",
+      "tags": [
+        "idempotency",
+        "kafka",
+        "at-least-once",
+        "deduplication",
+        "retry",
+        "exactly-once"
+      ],
+      "summary": "Guarantee safe retries and duplicate suppression by combining idempotency keys, DB unique constraints, and Kafka's idempotent producer semantics.",
+      "content": "## Idempotency Keys & At-Least-Once Delivery\n\n### Why Messages Are Delivered At-Least-Once\nIn distributed systems, networks are unreliable. When a producer sends a message and the broker crashes before ACKing, the producer retries. The broker may have already persisted the message — resulting in a **duplicate**.\n\n```\nProducer ──sends msg──► Broker ──persists──► Disk\n   ▲                       │\n   │      ACK lost!        │\n   └─── retry (duplicate!) ┘\n```\n\nKafka guarantees **at-least-once** delivery by default (acks=all, retries>0). Exactly-once requires extra configuration.\n\n### Idempotency Key Pattern (REST APIs)\nClients generate a unique key per logical operation. Servers store the result of the first execution and return the cached response on retries:\n\n```java\n@RestController\npublic class PaymentController {\n\n    @PostMapping(\"/api/payments\")\n    public ResponseEntity<PaymentResponse> charge(\n            @RequestHeader(\"Idempotency-Key\") String idempotencyKey,\n            @RequestBody PaymentRequest request) {\n\n        // Check deduplication table first\n        Optional<PaymentResponse> cached = idempotencyStore.find(idempotencyKey);\n        if (cached.isPresent()) {\n            return ResponseEntity.ok(cached.get());  // Return same response\n        }\n\n        PaymentResponse response = paymentService.charge(request);\n\n        // Persist idempotency key + response atomically\n        idempotencyStore.save(idempotencyKey, response, Duration.ofHours(24));\n        return ResponseEntity.ok(response);\n    }\n}\n```\n\n### Deduplication Table (Database Unique Constraint)\n\n```sql\nCREATE TABLE payment_idempotency (\n    idempotency_key VARCHAR(255) PRIMARY KEY,\n    response_body   JSONB NOT NULL,\n    created_at      TIMESTAMP DEFAULT NOW(),\n    expires_at      TIMESTAMP NOT NULL\n);\n-- Unique constraint guarantees atomic deduplication even under concurrent retries\n```\n\n### Kafka Idempotent Producer\nEnables exactly-once semantics at the producer level (within a single producer session):\n\n```yaml\nspring:\n  kafka:\n    producer:\n      acks: all                    # Wait for all replicas to persist\n      retries: 2147483647          # Max retries\n      properties:\n        enable.idempotence: true   # PID + sequence numbers prevent duplicates\n        max.in.flight.requests.per.connection: 5\n```\n\nThe broker tracks `(ProducerID, PartitionID, SequenceNumber)` — duplicate sequences are silently dropped.\n\n### Idempotent Consumer Pattern\nEven with an idempotent producer, consumers can receive the same message twice (consumer rebalance, pod restart). Make consumer processing idempotent:\n\n```java\n@KafkaListener(topics = \"orders.created\", groupId = \"inventory-service\")\npublic void onOrderCreated(OrderCreatedEvent event) {\n    // Upsert with 'ON CONFLICT DO NOTHING' — safe to run twice\n    inventoryRepository.reserveIfNotExists(\n        event.getOrderId(), event.getItems()\n    );\n}\n```\n\n### Retry with Exponential Backoff + Jitter\nNaive constant-interval retries cause thundering herd when all services recover simultaneously:\n\n```java\n// Exponential backoff with jitter\nlong delay = (long) (Math.pow(2, attemptNumber) * 1000) // base: 2^n seconds\n           + ThreadLocalRandom.current().nextLong(0, 1000); // +0-1s jitter\n```\n\nSpring Retry handles this declaratively:\n```java\n@Retryable(maxAttempts = 5, backoff = @Backoff(delay = 1000, multiplier = 2, random = true))\npublic void processPayment(PaymentRequest request) { ... }\n```",
+      "references": [
+        {
+          "title": "Stripe Idempotency Keys",
+          "url": "https://stripe.com/docs/api/idempotent_requests"
+        },
+        {
+          "title": "Kafka Idempotent Producer",
+          "url": "https://kafka.apache.org/documentation/#producerconfigs_enable.idempotence"
+        }
+      ],
+      "interviewTip": "Interviewers love: 'What's the difference between idempotent producer and exactly-once semantics in Kafka?' Idempotent producer (enable.idempotence=true) prevents duplicates within a single producer session. Exactly-once semantics (EOS) additionally wrap the consumer-process-produce cycle in a Kafka transaction, guaranteeing the message is processed and re-published exactly once atomically. EOS requires transactional.id on the producer and isolation.level=read_committed on the consumer.",
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "ms-db-001",
+      "title": "Database-Per-Service & Data Consistency Patterns",
+      "category": "Microservices",
+      "subcategory": "Patterns & Architecture",
+      "difficulty": "hard",
+      "tags": [
+        "database-per-service",
+        "cqrs",
+        "api-composition",
+        "eventual-consistency",
+        "data-patterns"
+      ],
+      "summary": "Enforce microservice autonomy with database-per-service, then restore cross-service query capability via API Composition and CQRS read models.",
+      "content": "## Database-Per-Service & Data Consistency Patterns\n\n### Why Shared Database Is an Anti-Pattern\n\n```\n┌─────────────────────────────────────────────┐\n│           ANTI-PATTERN: Shared DB           │\n│                                             │\n│  [Order Service] ──┐                        │\n│  [Payment Svc]  ───┼──► [Single PostgreSQL] │\n│  [Inventory Svc]───┘         Database       │\n│                                             │\n│  Problems:                                  │\n│  - Schema change in Orders breaks Payment  │\n│  - Cannot scale each DB independently      │\n│  - Coupling defeats microservice autonomy  │\n└─────────────────────────────────────────────┘\n```\n\nWith a shared DB, services are operationally decoupled but structurally coupled. A schema migration on the `orders` table requires coordinating all teams simultaneously.\n\n### Database-Per-Service (Correct Pattern)\n\n```\n[Order Service]   ──► [Orders PostgreSQL]\n[Payment Service] ──► [Payments PostgreSQL]\n[Inventory Svc]   ──► [Inventory MongoDB]\n[Search Service]  ──► [Elasticsearch]\n```\n\nEach service owns its schema. Teams deploy independently. Choose the right database type per service (relational, document, search index, time-series).\n\n### Problem: Cross-Service Queries\n'Show me order #123 with customer name, payment status, and stock level' spans 3 services.\n\n**Solution 1 — API Composition**:\n```java\n@Service\npublic class OrderDashboardService {\n    public OrderDashboard getOrderSummary(String orderId) {\n        // Parallel calls via CompletableFuture\n        CompletableFuture<Order> orderFuture =\n            CompletableFuture.supplyAsync(() -> orderClient.getOrder(orderId));\n        CompletableFuture<PaymentStatus> paymentFuture =\n            CompletableFuture.supplyAsync(() -> paymentClient.getStatus(orderId));\n        CompletableFuture<StockLevel> stockFuture =\n            CompletableFuture.supplyAsync(() -> inventoryClient.getStock(orderId));\n\n        CompletableFuture.allOf(orderFuture, paymentFuture, stockFuture).join();\n\n        return OrderDashboard.from(\n            orderFuture.join(), paymentFuture.join(), stockFuture.join()\n        );\n    }\n}\n```\nLimitation: Slow if any service is slow; no complex filtering across services.\n\n**Solution 2 — CQRS with Materialized Read Model**:\n```\n[Order Events] ──► [Kafka] ──► [Dashboard Query Service]\n[Payment Events]───────────►  (builds denormalized read model)\n[Inventory Events]──────────► [Read DB: orders_dashboard table]\n                                    │\n                              [Read API: fast single-query responses]\n```\n\nThe read model is eventually consistent but enables fast, complex queries without joining across services at runtime.\n\n### Eventual Consistency Trade-offs\n\n| Scenario | Acceptable? |\n|----------|-------------|\n| Product catalog freshness (5s lag) | Yes |\n| Payment status after charge | Probably yes (show 'processing') |\n| Bank account balance | No — needs strong consistency |\n| Inventory count before purchase | Business decision: oversell or block? |\n\n### Saga Maintains Consistency Without Shared DB\nInstead of distributed transactions (2PC), each service commits locally and emits an event. If a later step fails, compensating transactions roll back earlier steps (see Saga pattern).",
+      "references": [
+        {
+          "title": "Chris Richardson: Database per Service",
+          "url": "https://microservices.io/patterns/data/database-per-service.html"
+        },
+        {
+          "title": "CQRS Pattern — Microsoft",
+          "url": "https://learn.microsoft.com/en-us/azure/architecture/patterns/cqrs"
+        }
+      ],
+      "interviewTip": "A nuanced follow-up: 'How do you handle reporting that needs data from 10 services?' The answer is a dedicated reporting/analytics service that subscribes to all relevant Kafka topics and builds a denormalized reporting database (CQRS read model). This is fundamentally different from the operational query path and avoids coupling services at runtime.",
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "ms-sec-001",
+      "title": "Microservices Security: JWT Propagation & OAuth2 with Keycloak",
+      "category": "Microservices",
+      "subcategory": "Security & Configuration",
+      "difficulty": "hard",
+      "tags": [
+        "security",
+        "jwt",
+        "oauth2",
+        "keycloak",
+        "mtls",
+        "spring-security"
+      ],
+      "summary": "Secure microservices end-to-end using OAuth2 bearer token propagation, Keycloak realm setup, client credentials for service-to-service auth, and mTLS for internal channels.",
+      "content": "## Microservices Security: JWT Propagation & OAuth2 with Keycloak\n\n### End-to-End Security Architecture\n\n```\n[Mobile App]\n    │ 1. Login (Authorization Code Flow)\n    ▼\n[Keycloak] ──── issues JWT ────►  [Mobile App]\n    │\n    │ 2. API call with Bearer JWT\n    ▼\n[API Gateway]\n    │ 3. Validate JWT signature (JWK endpoint)\n    │ 4. Forward JWT in Authorization header\n    ▼\n[Order Service]\n    │ 5. Service-to-service call (client credentials)\n    ▼\n[Payment Service]\n    │ 6. mTLS (mutual TLS) — no JWT needed for internal\n    ▼\n[Fraud Detection Service]\n```\n\n### Bearer Token Propagation Between Services\n\n```java\n// Spring Security Resource Server configuration\n@Configuration\n@EnableWebSecurity\npublic class SecurityConfig {\n\n    @Bean\n    public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {\n        return http\n            .authorizeHttpRequests(auth -> auth\n                .requestMatchers(\"/actuator/health\").permitAll()\n                .anyRequest().authenticated()\n            )\n            .oauth2ResourceServer(oauth2 -> oauth2\n                .jwt(jwt -> jwt.jwtAuthenticationConverter(jwtConverter()))\n            )\n            .build();\n    }\n\n    @Bean\n    public JwtAuthenticationConverter jwtConverter() {\n        JwtGrantedAuthoritiesConverter conv = new JwtGrantedAuthoritiesConverter();\n        conv.setAuthoritiesClaimName(\"realm_access.roles\");  // Keycloak realm roles\n        conv.setAuthorityPrefix(\"ROLE_\");\n        JwtAuthenticationConverter jwtConv = new JwtAuthenticationConverter();\n        jwtConv.setJwtGrantedAuthoritiesConverter(conv);\n        return jwtConv;\n    }\n}\n```\n\n```yaml\n# application.yml — point to Keycloak JWKS endpoint\nspring:\n  security:\n    oauth2:\n      resourceserver:\n        jwt:\n          jwk-set-uri: http://keycloak:8080/realms/my-realm/protocol/openid-connect/certs\n```\n\n### Service-to-Service Auth: Client Credentials Flow\nServices authenticating with each other (not on behalf of a user) use the **Client Credentials** flow:\n\n```java\n@Configuration\npublic class OAuth2ClientConfig {\n\n    @Bean\n    public OAuth2AuthorizedClientManager authorizedClientManager(\n            ClientRegistrationRepository clients,\n            OAuth2AuthorizedClientService clientService) {\n        return new AuthorizedClientServiceOAuth2AuthorizedClientManager(\n            clients,\n            new ClientCredentialsOAuth2AuthorizedClientProvider());\n    }\n\n    @Bean\n    public WebClient paymentServiceClient(OAuth2AuthorizedClientManager manager) {\n        ServletOAuth2AuthorizedClientExchangeFilterFunction filter =\n            new ServletOAuth2AuthorizedClientExchangeFilterFunction(manager);\n        filter.setDefaultClientRegistrationId(\"payment-service\");\n        return WebClient.builder().apply(filter.oauth2Configuration()).build();\n    }\n}\n```\n\n```yaml\nspring:\n  security:\n    oauth2:\n      client:\n        registration:\n          payment-service:\n            client-id: order-service\n            client-secret: ${PAYMENT_CLIENT_SECRET}\n            authorization-grant-type: client_credentials\n            scope: payment:write\n        provider:\n          payment-service:\n            token-uri: http://keycloak:8080/realms/my-realm/protocol/openid-connect/token\n```\n\n### mTLS for Internal Service Communication\nmTLS eliminates the need for application-level tokens between trusted internal services. Both parties present certificates; the TLS handshake verifies both sides.\n\n```yaml\n# Istio automatically handles mTLS via PeerAuthentication policy\napiVersion: security.istio.io/v1beta1\nkind: PeerAuthentication\nmetadata:\n  name: default\nspec:\n  mtls:\n    mode: STRICT  # No plaintext traffic allowed between pods\n```\n\n### Keycloak Realm Setup Checklist\n- Create realm per environment (dev/staging/prod)\n- Create client per microservice\n- Configure **realm roles** (admin, user) and **client roles** (payment:write)\n- Map roles to JWT via **Mapper** configuration\n- Set token expiry (15m access token, 24h refresh token)",
+      "references": [
+        {
+          "title": "Keycloak Server Administration Guide",
+          "url": "https://www.keycloak.org/docs/latest/server_admin/"
+        },
+        {
+          "title": "Spring Security OAuth2 Resource Server",
+          "url": "https://docs.spring.io/spring-security/reference/servlet/oauth2/resource-server/index.html"
+        }
+      ],
+      "interviewTip": "A sharp question: 'If the API Gateway validates the JWT, why does the downstream Order Service also validate it?' Defense in depth — the gateway might be bypassed in a misconfigured environment. Each service should be independently secure (zero-trust). Also: JWT validation is stateless (verify signature against JWKS + check expiry) so it's cheap — no DB lookup required.",
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "ms-config-001",
+      "title": "Spring Cloud Config & Secrets Management",
+      "category": "Microservices",
+      "subcategory": "Security & Configuration",
+      "difficulty": "medium",
+      "tags": [
+        "spring-cloud-config",
+        "vault",
+        "secrets-management",
+        "refresh-scope",
+        "aws-secrets-manager"
+      ],
+      "summary": "Centralize microservice configuration with Spring Cloud Config Server, enable live reload via @RefreshScope, and manage secrets with HashiCorp Vault or AWS Secrets Manager.",
+      "content": "## Spring Cloud Config & Secrets Management\n\n### Why Centralized Config?\nWith 30 microservices each having application.yml, updating a shared database URL or feature flag requires deploying all 30 services. Config Server externalizes configuration:\n\n```\n[Git Repository]\n  └── config-repo/\n       ├── application.yml          (shared defaults)\n       ├── order-service.yml        (service-specific)\n       ├── order-service-prod.yml   (environment-specific)\n       └── payment-service.yml\n            │\n            ▼\n     [Config Server :8888]\n            │\n     ┌──────┴──────┐\n     ▼             ▼\n[Order Svc]  [Payment Svc]   (fetch config on startup)\n```\n\n### Config Server Setup\n\n```java\n@SpringBootApplication\n@EnableConfigServer\npublic class ConfigServerApplication {\n    public static void main(String[] args) {\n        SpringApplication.run(ConfigServerApplication.class, args);\n    }\n}\n```\n\n```yaml\n# Config Server application.yml\nserver:\n  port: 8888\nspring:\n  cloud:\n    config:\n      server:\n        git:\n          uri: https://github.com/myorg/config-repo\n          default-label: main\n          search-paths: '{application}'  # folder per service\n          clone-on-start: true\n          timeout: 10\n```\n\n### Client Configuration\n\n```yaml\n# order-service bootstrap.yml (loads before application context)\nspring:\n  application:\n    name: order-service\n  config:\n    import: optional:configserver:http://config-server:8888\n  profiles:\n    active: prod\n```\n\n### @RefreshScope: Live Configuration Reload\nWithout restarting the service, push a config change and trigger reload:\n\n```java\n@RestController\n@RefreshScope  // Bean is recreated when /actuator/refresh is called\npublic class FeatureFlagController {\n\n    @Value(\"${features.new-checkout-flow.enabled:false}\")\n    private boolean newCheckoutEnabled;\n\n    @GetMapping(\"/checkout\")\n    public String checkout() {\n        return newCheckoutEnabled ? newCheckoutService.process() : legacyCheckout.process();\n    }\n}\n```\n\nTrigger refresh via Spring Cloud Bus (broadcast to all instances) or individually:\n```bash\ncurl -X POST http://order-service:8080/actuator/refresh\n# Or broadcast via Spring Cloud Bus + Kafka/RabbitMQ:\ncurl -X POST http://config-server:8888/actuator/busrefresh\n```\n\n### HashiCorp Vault Integration\nFor true secrets (database passwords, API keys), Git is inappropriate. Vault provides dynamic secrets with automatic rotation:\n\n```yaml\nspring:\n  cloud:\n    vault:\n      host: vault.internal\n      port: 8200\n      scheme: https\n      authentication: KUBERNETES  # Pod uses K8s service account token\n      kubernetes:\n        role: order-service\n      kv:\n        enabled: true\n        backend: secret\n        application-name: order-service\n```\n\n### AWS Secrets Manager via spring-cloud-aws\n```yaml\nspring:\n  config:\n    import: aws-secretsmanager:/prod/order-service\n  cloud:\n    aws:\n      region:\n        static: us-east-1\n```\n\n### Encrypting Properties in Git Config\nSensitive values in Git config should be encrypted (last resort — prefer Vault):\n```yaml\n# In config repo — encrypted value\nspring:\n  datasource:\n    password: '{cipher}AQAoTE3qr...encryptedvalue...'\n```\n```bash\n# Config server encrypts/decrypts using symmetric key from environment\ncurl http://config-server:8888/encrypt -d 'mySecretPassword'\n```",
+      "references": [
+        {
+          "title": "Spring Cloud Config Reference",
+          "url": "https://docs.spring.io/spring-cloud-config/docs/current/reference/html/"
+        },
+        {
+          "title": "HashiCorp Vault Spring Integration",
+          "url": "https://spring.io/projects/spring-vault"
+        }
+      ],
+      "interviewTip": "Distinguish between @RefreshScope (recreates bean on /actuator/refresh) and @ConfigurationProperties with @RefreshScope (rebinds all @Value fields). Note the gotcha: @RefreshScope on beans injected into non-refresh beans won't propagate — the outer bean caches the reference. Also mention that Spring Boot 2.4+ uses spring.config.import instead of bootstrap.yml by default.",
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "ms-test-001",
+      "title": "Microservices Testing Pyramid",
+      "category": "Microservices",
+      "subcategory": "Testing & Observability",
+      "difficulty": "medium",
+      "tags": [
+        "testing",
+        "testcontainers",
+        "spring-cloud-contract",
+        "pact",
+        "consumer-driven-contracts",
+        "integration-testing"
+      ],
+      "summary": "Build a robust test suite with unit, integration (Testcontainers), consumer-driven contract (Spring Cloud Contract / Pact), and E2E tests using Docker Compose.",
+      "content": "## Microservices Testing Pyramid\n\n### The Testing Pyramid for Microservices\n\n```\n              ┌──────────┐\n              │   E2E    │  Docker Compose, Slow, Few\n             ┌┴──────────┴┐\n             │  Contract  │  Spring Cloud Contract / Pact\n            ┌┴────────────┴┐\n            │ Integration  │  @SpringBootTest + Testcontainers\n           ┌┴──────────────┴┐\n           │      Unit      │  Mockito, Fast, Many\n           └────────────────┘\n```\n\n### Unit Tests (Mockito)\nFast, isolated, no Spring context:\n```java\n@ExtendWith(MockitoExtension.class)\nclass OrderServiceTest {\n\n    @Mock private OrderRepository orderRepository;\n    @Mock private PaymentClient paymentClient;\n    @InjectMocks private OrderService orderService;\n\n    @Test\n    void placeOrder_whenPaymentSucceeds_shouldCreateOrder() {\n        // Arrange\n        given(paymentClient.charge(any())).willReturn(new PaymentResponse(\"txn-123\", true));\n        given(orderRepository.save(any())).willAnswer(inv -> inv.getArgument(0));\n\n        // Act\n        Order order = orderService.placeOrder(new OrderRequest(\"p-1\", 2, \"c-1\"));\n\n        // Assert\n        assertThat(order.getStatus()).isEqualTo(OrderStatus.CONFIRMED);\n        verify(orderRepository).save(argThat(o -> o.getPaymentRef().equals(\"txn-123\")));\n    }\n}\n```\n\n### Integration Tests (Testcontainers)\nSpin up real PostgreSQL and Kafka in Docker for integration tests:\n```java\n@SpringBootTest\n@Testcontainers\nclass OrderRepositoryIntegrationTest {\n\n    @Container\n    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>(\"postgres:16\")\n        .withDatabaseName(\"orders_test\")\n        .withUsername(\"test\")\n        .withPassword(\"test\");\n\n    @Container\n    static KafkaContainer kafka = new KafkaContainer(\n        DockerImageName.parse(\"confluentinc/cp-kafka:7.6.0\")\n    );\n\n    @DynamicPropertySource\n    static void configureProperties(DynamicPropertyRegistry registry) {\n        registry.add(\"spring.datasource.url\", postgres::getJdbcUrl);\n        registry.add(\"spring.kafka.bootstrap-servers\", kafka::getBootstrapServers);\n    }\n\n    @Test\n    void saveOrder_shouldPersistAndPublishEvent() {\n        // Test with real DB and real Kafka\n    }\n}\n```\n\n### Consumer-Driven Contract Tests (Spring Cloud Contract)\n**Producer side** — define contract in Groovy/YAML:\n```groovy\n// src/test/resources/contracts/order-created.groovy\nContract.make {\n    request {\n        method POST()\n        url '/api/orders'\n        body(customerId: 'c-123', productId: 'p-456', quantity: 2)\n    }\n    response {\n        status 201\n        body(orderId: regex('[a-f0-9-]{36}'), status: 'PENDING')\n        headers { contentType(applicationJson()) }\n    }\n}\n```\n\nSpring Cloud Contract auto-generates a stub JAR. **Consumer side** uses the stub to test integration without the real service running:\n```java\n@SpringBootTest\n@AutoConfigureStubRunner(\n    ids = \"com.example:order-service:+:stubs:8080\",\n    stubsMode = StubRunnerProperties.StubsMode.CLASSPATH\n)\nclass InventoryConsumerContractTest {\n    @Test\n    void shouldCreateOrder_andReceive201() {\n        // Stub server is running at localhost:8080 with pre-defined responses\n        ResponseEntity<OrderResponse> response = restTemplate\n            .postForEntity(\"http://localhost:8080/api/orders\", request, OrderResponse.class);\n        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);\n    }\n}\n```\n\n### E2E Tests (Docker Compose)\n```yaml\n# docker-compose.test.yml\nservices:\n  order-service:\n    image: order-service:latest\n    depends_on: [postgres, kafka, payment-service]\n  payment-service:\n    image: payment-service:latest\n  postgres:\n    image: postgres:16\n  kafka:\n    image: confluentinc/cp-kafka:7.6.0\n```\nRun with Testcontainers `DockerComposeContainer` or `docker compose up` in CI pipeline.\n\n### Pact — Alternative to Spring Cloud Contract\nPact is language-agnostic (works with Node.js consumers, Java producers). Consumer generates a pact file, uploads to Pact Broker, producer verifies against it in CI.",
+      "references": [
+        {
+          "title": "Testcontainers for Java",
+          "url": "https://java.testcontainers.org/"
+        },
+        {
+          "title": "Spring Cloud Contract Reference",
+          "url": "https://docs.spring.io/spring-cloud-contract/docs/current/reference/html/"
+        }
+      ],
+      "interviewTip": "Contract testing is the hardest to explain clearly — practice this: 'Contract tests verify that a producer's API meets the consumer's expectations WITHOUT running both services simultaneously. The producer generates a stub (Spring Cloud Contract) or the consumer generates a pact file (Pact framework) that is verified against the real producer in CI.' This prevents integration-test environment dependencies and catches breaking API changes before deployment.",
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "ms-mesh-001",
+      "title": "Service Mesh with Istio",
+      "category": "Microservices",
+      "subcategory": "Resilience & Reliability",
+      "difficulty": "expert",
+      "tags": [
+        "service-mesh",
+        "istio",
+        "envoy",
+        "mtls",
+        "traffic-management",
+        "canary-deployment"
+      ],
+      "summary": "Offload resilience, observability, and security concerns from application code to an Istio service mesh using Envoy sidecar proxies and declarative traffic policies.",
+      "content": "## Service Mesh with Istio\n\n### What Is a Service Mesh?\nA service mesh moves cross-cutting network concerns (mTLS, retries, circuit breaking, tracing) out of application code and into an infrastructure layer:\n\n```\n┌──────────────────────────────────────────────────┐\n│                 Kubernetes Pod                   │\n│  ┌──────────────────┐  ┌──────────────────────┐  │\n│  │  Order Service   │  │  Envoy Sidecar Proxy  │  │\n│  │  (your code)     │◄─►  (injected by Istio) │  │\n│  └──────────────────┘  └──────────────────────┘  │\n│         All inbound/outbound traffic via Envoy   │\n└──────────────────────────────────────────────────┘\n\n[Istiod Control Plane]\n  - Pushes config to all Envoy sidecars\n  - Issues mTLS certificates (SPIFFE/X.509)\n  - Manages traffic policies\n```\n\n### mTLS Between Services (Zero-Trust)\n```yaml\napiVersion: security.istio.io/v1beta1\nkind: PeerAuthentication\nmetadata:\n  name: default\n  namespace: production\nspec:\n  mtls:\n    mode: STRICT  # All inter-pod traffic must be mutually authenticated\n```\nIstiod automatically provisions and rotates X.509 certificates for each pod's SPIFFE identity (`spiffe://cluster.local/ns/prod/sa/order-service`).\n\n### Canary Deployment with Traffic Splitting\nRoute 5% of traffic to a new version without changing application code:\n```yaml\napiVersion: networking.istio.io/v1alpha3\nkind: VirtualService\nmetadata:\n  name: payment-vs\nspec:\n  hosts: [payment-service]\n  http:\n  - route:\n    - destination:\n        host: payment-service\n        subset: v1\n      weight: 95\n    - destination:\n        host: payment-service\n        subset: v2   # canary\n      weight: 5\n---\napiVersion: networking.istio.io/v1alpha3\nkind: DestinationRule\nmetadata:\n  name: payment-dr\nspec:\n  host: payment-service\n  subsets:\n  - name: v1\n    labels: { version: v1 }\n  - name: v2\n    labels: { version: v2 }\n```\n\n### Circuit Breaking at Mesh Level\n```yaml\napiVersion: networking.istio.io/v1alpha3\nkind: DestinationRule\nspec:\n  host: inventory-service\n  trafficPolicy:\n    connectionPool:\n      tcp:\n        maxConnections: 100\n      http:\n        http1MaxPendingRequests: 50\n        maxRequestsPerConnection: 10\n    outlierDetection:\n      consecutiveGatewayErrors: 5\n      interval: 10s\n      baseEjectionTime: 30s    # eject unhealthy instance for 30s\n      maxEjectionPercent: 50\n```\n\n### Distributed Tracing Injection\nIstio's Envoy automatically propagates `traceparent`/`b3` headers for traces. Application code only needs to forward received trace headers in outgoing calls (Istio can't do this automatically — your code must pass them through).\n\n### When Is a Service Mesh Overkill?\n- **Use Istio when**: 50+ microservices, strict security compliance (mTLS required), advanced traffic management (A/B testing, chaos engineering), polyglot services (Node.js + Java + Go can't share a Spring library).\n- **Skip Istio when**: Small team, fewer than 10 services, Spring Boot monolith migrating to microservices, significant operational overhead not justified by complexity.",
+      "references": [
+        {
+          "title": "Istio Documentation",
+          "url": "https://istio.io/latest/docs/"
+        },
+        {
+          "title": "Envoy Proxy",
+          "url": "https://www.envoyproxy.io/docs/envoy/latest/"
+        }
+      ],
+      "interviewTip": "Frame Istio as the infrastructure-layer equivalent of Resilience4j: 'Resilience4j implements circuit breaking in application code; Istio implements it in the network layer via Envoy. For polyglot microservices where you cannot enforce a common library, Istio is the only practical solution.' Also mention that Istio adds ~10-15ms latency per hop due to Envoy proxying — acceptable for most use cases but worth benchmarking.",
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "ms-health-001",
+      "title": "Health Checks: Readiness vs Liveness vs Startup Probes",
+      "category": "Microservices",
+      "subcategory": "Testing & Observability",
+      "difficulty": "medium",
+      "tags": [
+        "kubernetes",
+        "health-checks",
+        "readiness-probe",
+        "liveness-probe",
+        "spring-boot-actuator"
+      ],
+      "summary": "Configure Kubernetes probe types correctly to avoid premature traffic routing, unnecessary restarts, and slow-start failures using Spring Boot Actuator health indicators.",
+      "content": "## Health Checks: Readiness vs Liveness vs Startup Probes\n\n### The Three Kubernetes Probe Types\n\n```\n           App starts\n               │\n               ▼\n    ┌─ Startup Probe ──────────────────────────┐\n    │  'Is the app done initializing?'         │\n    │  If fails repeatedly → restart container  │\n    │  Once succeeds → Liveness + Readiness    │\n    └──────────────────────────────────────────┘\n               │ passes\n       ┌───────┴──────────┐\n       ▼                  ▼\n  Liveness Probe     Readiness Probe\n  'Should I restart?  'Send traffic now?'\n  Is app stuck/dead?' Is DB connected?'\n```\n\n**Liveness Probe**: Detects deadlocks, infinite loops, or completely frozen applications. On failure: Kubernetes **restarts** the container. Should check only if the process itself is alive — NOT if downstream dependencies are healthy (that's readiness).\n\n**Readiness Probe**: Detects whether the service can accept traffic. On failure: Kubernetes **removes the pod from the Service endpoints** (no traffic) but does NOT restart it. Should check DB connections, Kafka connectivity, cache warmup.\n\n**Startup Probe**: Prevents liveness from killing a slow-starting application before it finishes initialization (JVM warmup, schema migrations). Disables liveness until startup succeeds.\n\n### Spring Boot Actuator Integration\n\nSpring Boot 2.3+ exposes liveness and readiness as separate endpoints automatically:\n\n```yaml\nmanagement:\n  endpoint:\n    health:\n      probes:\n        enabled: true         # enables /actuator/health/liveness and /readiness\n      show-details: always\n  health:\n    livenessstate:\n      enabled: true\n    readinessstate:\n      enabled: true\n```\n\n### Custom Health Indicator: DB Pool + Kafka Lag\n\n```java\n@Component\npublic class KafkaConsumerLagHealthIndicator implements HealthIndicator {\n    private static final long MAX_LAG_THRESHOLD = 10_000L;\n\n    private final KafkaConsumerLagService lagService;\n\n    @Override\n    public Health health() {\n        Map<TopicPartition, Long> lags = lagService.getCurrentLag();\n        long maxLag = lags.values().stream().mapToLong(Long::longValue).max().orElse(0L);\n\n        if (maxLag > MAX_LAG_THRESHOLD) {\n            return Health.down()\n                .withDetail(\"maxLag\", maxLag)\n                .withDetail(\"threshold\", MAX_LAG_THRESHOLD)\n                .withDetail(\"message\", \"Consumer falling behind — mark unready\")\n                .build();\n        }\n        return Health.up().withDetail(\"maxLag\", maxLag).build();\n    }\n}\n```\n\n### Kubernetes Probe Configuration\n\n```yaml\ncontainers:\n- name: order-service\n  image: order-service:1.2.0\n  startupProbe:\n    httpGet:\n      path: /actuator/health/liveness\n      port: 8080\n    failureThreshold: 30      # Allow 30 * 10s = 5 minutes to start\n    periodSeconds: 10\n  livenessProbe:\n    httpGet:\n      path: /actuator/health/liveness\n      port: 8080\n    initialDelaySeconds: 0    # Startup probe handles the delay\n    periodSeconds: 10\n    failureThreshold: 3\n  readinessProbe:\n    httpGet:\n      path: /actuator/health/readiness\n      port: 8080\n    periodSeconds: 5\n    failureThreshold: 3\n```\n\n### Common Mistakes\n- **Checking dependencies in liveness**: If your downstream DB is down, liveness restarts your pod — which won't fix the DB and creates a restart loop. Liveness should be self-referential only.\n- **No startup probe for slow apps**: Without a startup probe, liveness kills a JVM app during its 60-second schema migration on first boot.\n- **Same endpoint for both probes**: Spring Boot's separate `/liveness` and `/readiness` endpoints exist precisely to avoid conflating these concerns.",
+      "references": [
+        {
+          "title": "Kubernetes Probes Documentation",
+          "url": "https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/"
+        },
+        {
+          "title": "Spring Boot Actuator Health",
+          "url": "https://docs.spring.io/spring-boot/docs/current/reference/html/actuator.html#actuator.endpoints.health"
+        }
+      ],
+      "interviewTip": "The most common wrong answer: 'Liveness checks if the DB is connected.' If you say this, the interviewer knows you haven't operated microservices in production. Liveness should ONLY check if the process is alive (not deadlocked). Put DB checks in Readiness. If liveness includes DB health and the DB goes down, all pods restart in a loop — making a bad situation catastrophic.",
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "ms-ver-001",
+      "title": "API Versioning & Backward Compatibility",
+      "category": "Microservices",
+      "subcategory": "Patterns & Architecture",
+      "difficulty": "medium",
+      "tags": [
+        "api-versioning",
+        "backward-compatibility",
+        "consumer-driven-contracts",
+        "deprecation",
+        "rest"
+      ],
+      "summary": "Evolve APIs safely using URI versioning, header versioning, additive change rules, contract testing, and structured deprecation with Sunset headers.",
+      "content": "## API Versioning & Backward Compatibility\n\n### Why API Versioning Matters\nIn a microservices ecosystem, multiple consumers (mobile apps, partner integrations, other services) may depend on your API. Breaking changes without versioning cause immediate production failures across all consumers simultaneously.\n\n### Versioning Strategies\n\n**URI Versioning** (most common, most visible):\n```\nGET /api/v1/orders/{id}    → returns { orderId, status, items[] }\nGET /api/v2/orders/{id}    → returns { orderId, status, items[], tracking: {...} }\n```\n\n```java\n@RestController\n@RequestMapping(\"/api/v2/orders\")\npublic class OrderControllerV2 {\n    @GetMapping(\"/{id}\")\n    public OrderResponseV2 getOrder(@PathVariable String id) {\n        // V2 adds tracking information\n        Order order = orderService.findById(id);\n        TrackingInfo tracking = trackingService.getTracking(order.getShipmentId());\n        return OrderResponseV2.from(order, tracking);\n    }\n}\n```\n\n**Header Versioning** (cleaner URLs, harder to test in browser):\n```http\nGET /api/orders/123\nAccept: application/vnd.myapp.v2+json\n```\n```java\n@GetMapping(value = \"/{id}\",\n            produces = \"application/vnd.myapp.v2+json\")\npublic OrderResponseV2 getOrderV2(@PathVariable String id) { ... }\n\n@GetMapping(value = \"/{id}\",\n            produces = \"application/vnd.myapp.v1+json\")\npublic OrderResponseV1 getOrderV1(@PathVariable String id) { ... }\n```\n\n### Additive vs Breaking Changes\n\n| Change Type | Backward Compatible? | Example |\n|-------------|---------------------|----------|\n| Add optional field | Yes | Add `currency` to response |\n| Add optional request param | Yes | Add `?includeTracking=true` |\n| Remove field | **No** | Remove `shipmentId` from response |\n| Rename field | **No** | `orderId` → `id` |\n| Change field type | **No** | `amount: string` → `amount: number` |\n| Add required field | **No** | Add required `customerId` to request |\n| Change HTTP status code | **No** | 200 → 201 on creation |\n\n### Consumer-Driven Contract Testing to Detect Breaking Changes\nPact and Spring Cloud Contract automatically detect breaking changes in CI before deployment:\n```\nConsumer defines expected contract → Pact Broker stores pact\n→ Producer CI verifies pact against real code\n→ If verification fails → PR blocked — breaking change detected early\n```\n\n### Sunset Header: Structured Deprecation\n```java\n@GetMapping(\"/api/v1/orders/{id}\")\npublic ResponseEntity<OrderResponseV1> getOrderV1(@PathVariable String id) {\n    OrderResponseV1 response = orderService.getV1(id);\n    return ResponseEntity.ok()\n        .header(\"Deprecation\", \"true\")\n        .header(\"Sunset\", \"Sat, 31 Dec 2026 23:59:59 GMT\")  // RFC 7231 date\n        .header(\"Link\", \"/api/v2/orders/{id}; rel=successor-version\")\n        .body(response);\n}\n```\n\n### Deprecation Strategy Timeline\n```\nMonth 0:  V2 released. V1 marked deprecated with Sunset header.\nMonth 1:  Alert consumers via email/Slack with migration guide.\nMonth 3:  V1 returns HTTP 301 redirecting to V2 with warning header.\nMonth 6:  V1 returns HTTP 410 Gone. Migration forced.\nMonth 9:  V1 endpoint removed from codebase.\n```\n\n### Version at the Gateway Level\nSpring Cloud Gateway can route version prefixes without burdening each microservice:\n```yaml\nspring:\n  cloud:\n    gateway:\n      routes:\n        - id: orders-v1\n          uri: lb://ORDER-SERVICE-V1\n          predicates:\n            - Path=/api/v1/orders/**\n        - id: orders-v2\n          uri: lb://ORDER-SERVICE\n          predicates:\n            - Path=/api/v2/orders/**\n```",
+      "references": [
+        {
+          "title": "REST API Versioning Best Practices",
+          "url": "https://restfulapi.net/versioning/"
+        },
+        {
+          "title": "RFC 8594 — Sunset HTTP Header",
+          "url": "https://datatracker.ietf.org/doc/html/rfc8594"
+        }
+      ],
+      "interviewTip": "When asked 'which versioning strategy do you prefer?', don't just say URI versioning — explain the trade-offs. URI versioning is the most operationally simple (works with caches, CDNs, logs, monitoring tools). Header versioning is 'purer' REST (the URL represents a resource, not a version of a resource) but harder to test manually and incompatible with many CDNs. For microservices internal APIs, consumer-driven contracts often eliminate the need for versioning altogether.",
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "ms-decomp-001",
+      "title": "Service Decomposition Strategies",
+      "category": "Microservices",
+      "subcategory": "Patterns & Architecture",
+      "difficulty": "hard",
+      "tags": [
+        "decomposition",
+        "ddd",
+        "bounded-context",
+        "strangler-fig",
+        "anti-corruption-layer",
+        "monolith-migration"
+      ],
+      "summary": "Decompose a monolith into microservices using business capability mapping, DDD bounded contexts, volatility analysis, and the Strangler Fig migration pattern.",
+      "content": "## Service Decomposition Strategies\n\n### The Core Question: How Big Is a Microservice?\nThere is no universally correct size — decompose along lines that minimize coupling and maximize cohesion. A service that is too small creates chatty network calls; too large recreates a distributed monolith.\n\n### Strategy 1: Decompose by Business Capability\nModel services around what the business does, not technical layers:\n\n```\nE-commerce Platform Business Capabilities:\n├── Product Catalog      → [Catalog Service]\n├── Order Management     → [Order Service]\n├── Payment Processing   → [Payment Service]\n├── Inventory & Fulfillment → [Inventory Service]\n├── Customer Accounts    → [Customer Service]\n└── Notifications        → [Notification Service]\n```\n\nAvoid: decomposing by technical layer (Data Layer Service, Business Logic Service, UI Service) — this creates tight coupling between layers.\n\n### Strategy 2: DDD Bounded Contexts\nA bounded context is the explicit boundary within which a domain model applies. The same word 'Customer' means different things in different contexts:\n\n```\n[Order Context]          [Marketing Context]     [Support Context]\n  Customer:                Customer:               Customer:\n  - orderId                - loyaltyPoints         - ticketHistory\n  - shippingAddress        - campaignPrefs         - satisfactionScore\n  - paymentMethod          - emailOptIn            - agentAssigned\n```\n\nDon't share a single `Customer` entity across all services — each bounded context owns its own model. Integration via events or ACL.\n\n### Strategy 3: Decompose by Volatility\nServices that change together should be deployed together. Identify what changes frequently vs rarely:\n\n```\nHigh Volatility (deploy weekly):     Low Volatility (deploy quarterly):\n- Recommendation Engine              - Core Billing Logic\n- A/B Test Variants                  - Authentication\n- Pricing Rules                      - Regulatory Reporting\n- UI Personalization                 - Data Archival\n```\n\n### The Strangler Fig Pattern: Migrating a Monolith\nNamed after the strangler fig tree that grows around a host tree and eventually replaces it:\n\n```\nPhase 1:  All traffic → [Monolith]\n\nPhase 2:  [API Gateway]\n           ├─ /api/orders/** → [Order Microservice] (new)\n           └─ /**            → [Monolith] (existing)\n\nPhase 3:  [API Gateway]\n           ├─ /api/orders/**  → [Order Microservice]\n           ├─ /api/payments/** → [Payment Microservice]\n           └─ /**             → [Monolith] (shrinking)\n\nPhase N:  Monolith retired. All traffic to microservices.\n```\n\n### Anti-Corruption Layer (ACL)\nWhen integrating with a legacy system or third-party API with a different domain model, the ACL translates between models without polluting your clean domain:\n\n```java\n@Service\npublic class LegacyCRMAntiCorruptionLayer {\n\n    public Customer translate(LegacyCRMContact legacyContact) {\n        return Customer.builder()\n            .id(legacyContact.getCONTACT_ID())        // camelCase from legacy\n            .email(legacyContact.getEMAIL_ADDR())     // legacy column name\n            .name(legacyContact.getFIRST_NM()         // legacy abbreviations\n                + \" \" + legacyContact.getLAST_NM())\n            .build();\n    }\n}\n```\n\n### SOLID at Service Level\n- **SRP**: Each service has one reason to change (one business capability)\n- **OCP**: New features via new events/APIs, not modifying existing contracts\n- **LSP**: Service versions should be substitutable (backward compatibility)\n- **ISP**: Don't force consumers to subscribe to events they don't need\n- **DIP**: Services depend on abstractions (events, APIs) not on each other's internals",
+      "references": [
+        {
+          "title": "Strangler Fig Application — Martin Fowler",
+          "url": "https://martinfowler.com/bliki/StranglerFigApplication.html"
+        },
+        {
+          "title": "Domain-Driven Design — Eric Evans",
+          "url": "https://www.domainlanguage.com/ddd/"
+        }
+      ],
+      "interviewTip": "When asked 'how would you break up this monolith?', walk through all three strategies systematically: (1) identify business capabilities, (2) find bounded contexts where the same entity means different things, (3) analyze volatility to prioritize which to extract first. Then mention the Strangler Fig as the safe migration path — extracting one capability at a time with the gateway routing to both old and new simultaneously.",
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "ms-async-001",
+      "title": "Async Communication Patterns in Microservices",
+      "category": "Microservices",
+      "subcategory": "Service Communication",
+      "difficulty": "medium",
+      "tags": [
+        "async",
+        "kafka",
+        "rabbitmq",
+        "fire-and-forget",
+        "request-reply",
+        "publish-subscribe"
+      ],
+      "summary": "Choose the right async messaging pattern — fire-and-forget, request-reply with correlation IDs, or pub-sub — and know when sync REST/gRPC beats Kafka.",
+      "content": "## Async Communication Patterns in Microservices\n\n### Sync vs Async: The Fundamental Trade-off\n\n```\n        Synchronous (REST/gRPC)        Asynchronous (Kafka/RabbitMQ)\n        ─────────────────────          ──────────────────────────────\n        + Simple, easy to debug        + Temporal decoupling\n        + Immediate response            + Better fault isolation\n        + Easy error propagation        + Natural backpressure\n        - Temporal coupling             - Eventual consistency only\n        - Cascading failures            - Complex error handling\n        - Availability chain            - Hard to debug message flows\n\n  USE WHEN: User needs immediate       USE WHEN: Cross-service state\n  response (checkout total, search)    changes, batch processing,\n  or strong consistency required.      fanout, audit logging.\n```\n\n### Pattern 1: Fire-and-Forget\nSend an event and don't wait for a response. The sender is decoupled from all consumers:\n\n```java\n@Service\npublic class OrderService {\n\n    public Order placeOrder(OrderRequest request) {\n        Order order = orderRepository.save(Order.from(request));\n\n        // Fire-and-forget: don't block on notification or analytics\n        kafkaTemplate.send(\"orders.created\", OrderCreatedEvent.from(order));\n        // Returns immediately — notification service handles asynchronously\n        return order;\n    }\n}\n```\n\n### Pattern 2: Request-Reply over Messaging (Correlation ID)\nFor async operations that need a response, use a correlation ID and a reply topic:\n\n```java\n// Requester (Order Service)\npublic CompletableFuture<FraudCheckResult> checkFraud(OrderRequest request) {\n    String correlationId = UUID.randomUUID().toString();\n    CompletableFuture<FraudCheckResult> future = new CompletableFuture<>();\n    pendingRequests.put(correlationId, future);  // Store pending future\n\n    FraudCheckRequest msg = new FraudCheckRequest(correlationId, request.getCustomerId());\n    kafkaTemplate.send(\"fraud.check.requests\", msg);\n\n    // Timeout after 5 seconds\n    return future.orTimeout(5, TimeUnit.SECONDS)\n                 .whenComplete((r, e) -> pendingRequests.remove(correlationId));\n}\n\n// Handle reply from Fraud Service\n@KafkaListener(topics = \"fraud.check.replies\", groupId = \"order-service\")\npublic void onFraudCheckReply(FraudCheckResult result) {\n    CompletableFuture<FraudCheckResult> future =\n        pendingRequests.get(result.getCorrelationId());\n    if (future != null) {\n        future.complete(result);\n    }\n}\n```\n\n### Pattern 3: Publish-Subscribe\nOne producer, multiple independent consumers. Perfect for events that multiple services care about:\n\n```\n[OrderCreatedEvent]\n        │\n        ▼\n  [Kafka Topic: orders.created]\n        │\n   ┌────┼────────┐\n   ▼    ▼        ▼\n[Email] [Loyalty] [Analytics]\n Service  Points    Pipeline\n```\n\nKafka consumer groups allow multiple independent consumer groups to each receive every message:\n```java\n// Email service — separate consumer group\n@KafkaListener(topics = \"orders.created\", groupId = \"email-service\")\npublic void sendConfirmation(OrderCreatedEvent event) { ... }\n\n// Loyalty service — different consumer group, same messages\n@KafkaListener(topics = \"orders.created\", groupId = \"loyalty-service\")\npublic void awardPoints(OrderCreatedEvent event) { ... }\n```\n\n### Kafka for Event Streaming vs RabbitMQ for Work Queues\n\n| Aspect | Apache Kafka | RabbitMQ |\n|--------|-------------|----------|\n| Model | Log (events retained) | Queue (messages consumed and deleted) |\n| Replay | Yes — replay from offset | No — message gone after consume |\n| Ordering | Per-partition | Per-queue |\n| Throughput | Millions/sec | ~50-100k/sec |\n| Routing | Topic/partition | Exchange → Queue (flexible routing keys) |\n| Best For | Event streaming, audit trail, CQRS | Task queues, RPC, work distribution |\n\n### Temporal Coupling vs Decoupling\n**Coupled (REST)**: `Order Service` → `Payment Service` must both be UP simultaneously. If Payment is down, the order fails.\n\n**Decoupled (Kafka)**: Order Service publishes `PaymentRequested` event. Payment Service processes it when available. Order Service continues even if Payment is temporarily down — events buffer in Kafka.",
+      "references": [
+        {
+          "title": "Enterprise Integration Patterns",
+          "url": "https://www.enterpriseintegrationpatterns.com/"
+        },
+        {
+          "title": "Apache Kafka Documentation",
+          "url": "https://kafka.apache.org/documentation/"
+        }
+      ],
+      "interviewTip": "The best candidates can articulate WHY to choose async: 'We made the notification service async because a slow email provider should never block a user's checkout — the checkout response time would degrade. Payment, however, stays synchronous because users need immediate confirmation of whether their card was charged.' Frame every async decision in terms of the user experience and failure isolation impact.",
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "ms-obs-002",
+      "title": "SLI, SLO, SLA & Error Budgets",
+      "category": "Microservices",
+      "subcategory": "Testing & Observability",
+      "difficulty": "medium",
+      "tags": [
+        "sli",
+        "slo",
+        "sla",
+        "error-budget",
+        "prometheus",
+        "reliability"
+      ],
+      "summary": "Define measurable reliability targets with SLIs and SLOs, calculate error budgets, and implement Prometheus burn rate alerts to proactively protect uptime.",
+      "content": "## SLI, SLO, SLA & Error Budgets\n\n### The Reliability Hierarchy\n\n```\n  SLA (Service Level Agreement)\n  └─ Legal/contractual commitment to customers\n     └─ SLO (Service Level Objective)\n        └─ Internal engineering target (stricter than SLA)\n           └─ SLI (Service Level Indicator)\n              └─ The actual metric you measure\n```\n\n### SLI: Service Level Indicator\nA quantitative measure of service behavior. Good SLIs directly reflect user experience:\n\n- **Availability**: `(successful requests) / (total requests)`\n- **Latency**: `(requests served < 300ms) / (total requests)` (p99)\n- **Error rate**: `(5xx responses) / (total responses)`\n- **Throughput**: requests per second processed\n- **Freshness**: age of newest data in a cache/read model\n\n### SLO: Service Level Objective\nThe target value for an SLI over a time window. Defines what 'reliable enough' means for engineering:\n\n```\nSLO Examples:\n  Availability: 99.9% of requests succeed over a 30-day rolling window\n  Latency p99:  95% of requests complete in < 500ms\n  Error rate:   < 0.1% of requests return 5xx\n```\n\n**99.9% availability = how much downtime per year?**\n```\n100% - 99.9% = 0.1% allowed failure time\n0.001 × 365 days × 24 hours × 60 minutes = 525.6 minutes = ~8.7 hours/year\n0.001 × 30 days × 24h × 60m = 43.2 minutes downtime per month\n\nCommon SLO targets:\n  99%    → 87.6 hours/year  (~3.65 days)\n  99.9%  → 8.76 hours/year  (~43 min/month)\n  99.95% → 4.38 hours/year  (~22 min/month)\n  99.99% → 52.6 min/year    (~4.4 min/month)\n```\n\n### Error Budget\nError budget = 1 - SLO. It's the allowed failure capacity before breaching the SLO:\n\n```\nSLO: 99.9% availability\nError Budget: 0.1% = 43.2 minutes/month\n\nBudget consumed:                Budget remaining:\n  Week 1: 20min incident  →    23.2 minutes left\n  Week 2: 5min blip       →    18.2 minutes left\n  Week 3: 25min outage    →    -6.8 minutes (BUDGET EXCEEDED)\n  → Freeze feature releases until next month\n  → Focus 100% on reliability improvements\n```\n\n### Prometheus SLO Recording Rules\n\n```yaml\n# prometheus/rules/order-service-slo.yml\ngroups:\n- name: order-service-slo\n  interval: 30s\n  rules:\n  # SLI: availability over 5-minute window\n  - record: job:request_availability:rate5m\n    expr: |\n      sum(rate(http_requests_total{job=\"order-service\", code!~\"5..\"}[5m]))\n      /\n      sum(rate(http_requests_total{job=\"order-service\"}[5m]))\n```\n\n### Burn Rate Alerts\nA burn rate of 1x means you're consuming your error budget exactly at the rate where you'll exhaust it by the end of the window. A burn rate of 14.4x means you'll exhaust the entire monthly budget in 2 hours:\n\n```yaml\n  # Alert when burn rate is too fast (will exhaust budget early)\n  - alert: OrderServiceHighErrorBurnRate\n    expr: |\n      (\n        sum(rate(http_requests_total{job=\"order-service\",code=~\"5..\"}[1h]))\n        /\n        sum(rate(http_requests_total{job=\"order-service\"}[1h]))\n      ) > 14.4 * 0.001   # 14.4x burn rate on 99.9% SLO\n    for: 5m\n    labels:\n      severity: critical\n    annotations:\n      summary: \"Order service burning error budget 14.4x faster than sustainable\"\n      description: \"At this rate, the monthly error budget will be exhausted in 2 hours\"\n```\n\n### SLA vs SLO: Key Difference\n**SLO** is an internal engineering target. Typically stricter than the SLA to provide a safety buffer:\n- **SLO**: 99.95% (internal target — engineers get paged)\n- **SLA**: 99.9% (contractual — customers get SLA credits if breached)\n\nThe gap (0.05%) is the safety margin. If the SLO is breached, engineers act before the SLA is breached and customers are impacted.",
+      "references": [
+        {
+          "title": "Google SRE Book: Service Level Objectives",
+          "url": "https://sre.google/sre-book/service-level-objectives/"
+        },
+        {
+          "title": "Alerting on SLOs — Google SRE Workbook",
+          "url": "https://sre.google/workbook/alerting-on-slos/"
+        }
+      ],
+      "interviewTip": "Walk through the error budget math confidently: '99.9% SLO on a 30-day window gives us 43.2 minutes of allowed downtime. When we deploy a risky feature and it causes a 20-minute incident, we've burned 46% of our monthly budget — at that point we slow feature releases and prioritize reliability.' Interviewers from SRE-mature companies (Google, Netflix, Spotify) will love that you can connect reliability metrics to engineering velocity decisions.",
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    }
+  ]
+}

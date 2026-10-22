@@ -1,0 +1,324 @@
+{
+  "category": "Frontend Engineering",
+  "icon": "FaReact",
+  "color": "#06b6d4",
+  "subcategories": [
+    "React",
+    "Angular",
+    "JavaScript & TypeScript",
+    "Performance & Architecture"
+  ],
+  "topics": [
+    {
+      "id": "fe-react-001",
+      "title": "React Fiber Architecture & Reconciliation Engine",
+      "category": "Frontend Engineering",
+      "subcategory": "React",
+      "difficulty": "hard",
+      "tags": [
+        "react",
+        "fiber",
+        "reconciliation",
+        "virtual-dom",
+        "concurrent-react"
+      ],
+      "summary": "Deep dive into Fiber node structures, double-buffering, interruptible render phase, and heuristic O(n) diffing.",
+      "content": "## React Fiber & Reconciliation Deep Dive\n\n### The Stack Reconciler Bottleneck (React 15)\nIn React 15, reconciliation was synchronous and recursive. Once a tree update started, it could not be paused. If diffing a large tree took 40ms, the main thread froze, dropping frames below the 60fps budget (16.6ms/frame).\n\n### The Fiber Solution: Cooperative Multitasking\nFiber re-implemented reconciliation as a **singly-linked list data structure** representing a unit of work. Work can now be:\n1. **Paused** and resumed later\n2. **Prioritized** (user input > background data fetch)\n3. **Aborted** if superseded by higher priority updates\n\n```\nFiber Node Structure:\n├── type & tag: Function/Class component, HostComponent (div, span)\n├── key: String identifier for list diffing\n├── stateNode: Reference to actual DOM node or class instance\n├── child: Pointer to first child Fiber\n├── sibling: Pointer to next sibling Fiber\n├── return: Pointer to parent Fiber\n├── memoizedState: Linked list of hooks\n└── alternate: Pointer to counterpart in double-buffering\n```\n\n### Double-Buffering Mechanism\nReact maintains two Fiber trees in memory simultaneously:\n1. **`current` tree**: Represents the exact state currently rendered on screen.\n2. **`workInProgress` (WIP) tree**: Built and modified during the Render phase.\n\n```\nScreen (User View)\n       ▲\n       │ (Atomic pointer swap in Commit Phase)\n┌──────────────┐          ┌──────────────────────┐\n│ current tree │ ◄──────► │ workInProgress tree  │\n└──────────────┘          └──────────────────────┘\n```\n\n### Two-Phase Execution Pipeline\n\n| Phase | Synchronous? | Interruptible? | Responsibility |\n| :--- | :--- | :--- | :--- |\n| **Render Phase** | No (Concurrent) | **Yes** | Traverses tree, runs component functions, builds WIP tree, computes flags (`Placement`, `Update`, `Deletion`). Discardable if higher-priority update occurs. |\n| **Commit Phase** | **Yes** (Atomic) | No | Takes completed WIP tree, rapidly applies batch DOM mutations, executes `useLayoutEffect`, and swaps `current = workInProgress`. |\n\n### Heuristic O(n) Diffing Rules\n1. **Different Element Types**: Replacing `<div>` with `<span>` immediately destroys the entire old subtree.\n2. **Keyed Lists**: Keys must be **stable, unique, and predictable**. Never use array index when items can be inserted, deleted, or reordered.",
+      "references": [
+        {
+          "title": "Lin Clark: A Cartoon Guide to Fiber",
+          "url": "https://www.youtube.com/watch?v=ZCuYPiUIONs"
+        },
+        {
+          "title": "React Architecture Overview",
+          "url": "https://github.com/reactwg/react-18"
+        }
+      ],
+      "interviewTip": "Distinguish between the Render phase (pure calculation, interruptible) and Commit phase (DOM mutation, atomic). Mention double buffering.",
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "fe-react-002",
+      "title": "React Hooks Internals, Stale Closures & Optimization",
+      "category": "Frontend Engineering",
+      "subcategory": "React",
+      "difficulty": "medium",
+      "tags": [
+        "react",
+        "hooks",
+        "usememo",
+        "usecallback",
+        "stale-closures"
+      ],
+      "summary": "How hooks operate as singly-linked lists on fiber.memoizedState, debugging stale closures, and the cost of useMemo/useCallback.",
+      "content": "## React Hooks Internals & Memory Model\n\n### Hooks as a Singly-Linked List\nHooks are stored on `fiber.memoizedState` as a linked list:\n\n```javascript\nconst hook = {\n  memoizedState: value, // State value or [cachedValue, deps] for useMemo\n  queue: updateQueue,   // Circular linked list of pending actions\n  next: nextHook        // Pointer to next hook in same component\n};\n```\n\n> **Why Rules of Hooks Exist:** React tracks hooks strictly by invocation order. Calling hooks inside conditionals alters the linked-list indexes, breaking state mapping.\n\n### Stale Closures & The Latest Ref Pattern\n\n```jsx\n// ❌ Bug: Stale closure in setInterval (count is permanently trapped at 0)\nuseEffect(() => {\n  const id = setInterval(() => {\n    console.log(count); // Always 0!\n    setCount(count + 1);\n  }, 1000);\n  return () => clearInterval(id);\n}, []); // Empty deps captures initial render closure\n\n// ✅ Solution A: Functional state updater\nsetCount(prev => prev + 1);\n\n// ✅ Solution B: Latest Ref Pattern (for async callbacks)\nconst countRef = useRef(count);\ncountRef.current = count;\nuseEffect(() => {\n  const id = setInterval(() => {\n    console.log(countRef.current); // Reads fresh ref value!\n  }, 1000);\n  return () => clearInterval(id);\n}, []);\n```\n\n### useMemo vs useCallback\n- `useCallback(fn, deps)` is syntactic sugar for `useMemo(() => fn, deps)`.\n- **Cost**: Both allocate an array on every render and run an $O(n)$ shallow equality loop.\n- Only wrap callbacks when passing them to components wrapped in `React.memo` or when they are dependencies in `useEffect`.",
+      "references": [
+        {
+          "title": "Dan Abramov: A Complete Guide to useEffect",
+          "url": "https://overreacted.io/a-complete-guide-to-useeffect/"
+        }
+      ],
+      "interviewTip": "Explain how the 'Latest Ref Pattern' breaks closures without forcing re-renders or restarting timer/websocket subscriptions.",
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "fe-react-003",
+      "title": "State Management Architecture: Context vs Zustand vs Redux vs TanStack Query",
+      "category": "Frontend Engineering",
+      "subcategory": "React",
+      "difficulty": "hard",
+      "tags": [
+        "state-management",
+        "zustand",
+        "redux",
+        "context-api",
+        "tanstack-query"
+      ],
+      "summary": "Evaluate Client State vs Server State: Context API re-render traps, Redux Toolkit, Zustand atomic selectors, and TanStack Query caching.",
+      "content": "## Modern Frontend State Management Architecture\n\n### Client State vs Server State\nThe biggest mistake in modern frontend is treating Server Cache as Client State:\n- **Server State**: Asynchronous, shared, remotely owned, requires caching, deduplication, background refetching (Use **TanStack Query / SWR**).\n- **Client State**: Synchronous, local to client, ephemeral UI state (modals, active tabs, theme).\n\n```\nState Classification:\n├── Server State (Async) ────► TanStack Query / RTK Query\n└── Client State (Sync)\n    ├── Local UI State ──────► useState / useReducer\n    ├── Shared Subtree ──────► Context API\n    └── Global Complex ──────► Zustand / Redux Toolkit\n```\n\n### Context API Re-render Trap\nWhen a Context value changes, **every single consumer component re-renders**, even if it only reads an untouched property of the context object!\n\n```jsx\n// ❌ Re-render Trap: Header re-renders when cart changes!\nconst AppContext = createContext();\n\n// ✅ Solution A: Split contexts by update frequency\nconst AuthContext = createContext(); // Changes rarely\nconst CartContext = createContext(); // Changes frequently\n\n// ✅ Solution B: Atomic Selectors with Zustand\nimport { create } from 'zustand';\n\nconst useCartStore = create((set) => ({\n  items: [],\n  addItem: (item) => set((s) => ({ items: [...s.items, item] })),\n}));\n\n// Only re-renders when items.length changes, not on unrelated updates:\nconst itemCount = useCartStore((state) => state.items.length);\n```\n\n### Comparison Matrix\n\n| Library | Paradigm | Bundle Size | Boilerplate | Selective Re-rendering |\n| :--- | :--- | :--- | :--- | :--- |\n| **Context API** | Built-in React | 0 KB | Low | Poor (requires splitting) |\n| **Zustand** | Store + Atomic Selectors | ~1.2 KB | Very Low | Excellent (selector subscriptions) |\n| **Redux Toolkit** | Unidirectional Flux | ~11 KB | Medium | Excellent (`useSelector`) |\n| **TanStack Query** | Server State & Cache | ~12 KB | Low | Automatic caching & invalidation |",
+      "references": [
+        {
+          "title": "TkDodo's Blog: Practical React Query",
+          "url": "https://tkdodo.eu/blog/practical-react-query"
+        },
+        {
+          "title": "Zustand Documentation",
+          "url": "https://docs.pmnd.rs/zustand/getting-started/introduction"
+        }
+      ],
+      "interviewTip": "State management questions are a trap if you jump to Redux immediately. First separate Server Cache (TanStack Query) from Client UI State (Zustand).",
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "fe-react-004",
+      "title": "Concurrent React: useTransition, useDeferredValue & Suspense",
+      "category": "Frontend Engineering",
+      "subcategory": "React",
+      "difficulty": "hard",
+      "tags": [
+        "react-18",
+        "concurrent",
+        "useTransition",
+        "useDeferredValue",
+        "suspense"
+      ],
+      "summary": "Keep UI interactive during heavy computations using non-urgent transitions, deferred rendering, and Suspense streaming.",
+      "content": "## Concurrent React & Non-Urgent Updates\n\n### Urgent vs Non-Urgent Updates\n- **Urgent**: Typing into an input, clicking a button, hovering (User expects immediate feedback < 16ms).\n- **Non-Urgent / Transition**: Filtering a 10,000-row table, changing tab views, rendering complex charts.\n\n### `useTransition` Implementation\n`useTransition` lets you mark state updates as low priority. React interrupts the transition if the user types another character!\n\n```jsx\nimport { useState, useTransition } from 'react';\n\nfunction SearchPage() {\n  const [input, setInput] = useState('');\n  const [filteredList, setFilteredList] = useState([]);\n  const [isPending, startTransition] = useTransition();\n\n  const handleChange = (e) => {\n    // 1. Urgent update: Input stays 100% responsive without lag\n    setInput(e.target.value);\n\n    // 2. Non-urgent update: Yields main thread to user keystrokes\n    startTransition(() => {\n      const results = expensiveFilter(e.target.value);\n      setFilteredList(results);\n    });\n  };\n\n  return (\n    <div>\n      <input value={input} onChange={handleChange} />\n      {isPending && <Spinner />}\n      <VirtualList items={filteredList} />\n    </div>\n  );\n}\n```\n\n### `useDeferredValue`\nWhen you don't control the state setter (e.g., receiving a prop from a parent), defer the value itself:\n\n```jsx\nfunction SearchResults({ query }) {\n  // Defers re-rendering SearchResults until urgent keystrokes finish\n  const deferredQuery = useDeferredValue(query);\n  const isStale = query !== deferredQuery;\n\n  return (\n    <div style={{ opacity: isStale ? 0.6 : 1 }}>\n      <HeavyList query={deferredQuery} />\n    </div>\n  );\n}\n```",
+      "references": [
+        {
+          "title": "React Docs: useTransition",
+          "url": "https://react.dev/reference/react/useTransition"
+        }
+      ],
+      "interviewTip": "Distinguish useTransition (wraps state update logic) from useDeferredValue (wraps a value/prop). Both allow React to interrupt rendering.",
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "fe-ang-001",
+      "title": "Angular Signals & Fine-Grained Reactivity (Zoneless)",
+      "category": "Frontend Engineering",
+      "subcategory": "Angular",
+      "difficulty": "hard",
+      "tags": [
+        "angular",
+        "signals",
+        "reactivity",
+        "change-detection",
+        "zoneless"
+      ],
+      "summary": "Deep dive into Angular 16+ Signals, computed properties, effects, and moving towards Zoneless change detection.",
+      "content": "## Angular Signals: The Modern Reactivity Model\n\n### Why Signals Over Zone.js?\nHistorically, Angular relied on **Zone.js** to monkey-patch all browser asynchronous APIs (`setTimeout`, `Promise`, DOM events, XHR). When any async event completed, Zone.js triggered top-down change detection across the entire component tree (`tick()`), leading to overhead in large apps.\n\n**Signals** introduce **fine-grained reactivity**: Angular knows precisely which DOM nodes depend on which signal, updating only that exact slice of UI without full-tree dirty checking.\n\n```\nZone.js Model (Coarse-grained):\nAsync Event ──► Zone.js intercept ──► Tree-wide dirty check (Root → Leaf)\n\nSignals Model (Fine-grained):\nSignal Mutation ──► Reactive Dependency Graph ──► Targeted DOM Update\n```\n\n### The Three Signal Primitives\n\n#### 1. Writable Signals\n```typescript\nimport { Component, signal } from '@angular/core';\n\n@Component({\n  selector: 'app-counter',\n  template: `\n    <button (click)=\"increment()\">Count: {{ count() }}</button>\n  `\n})\nexport class CounterComponent {\n  count = signal(0);\n\n  increment() {\n    this.count.update(value => value + 1);\n  }\n}\n```\n\n#### 2. Computed Signals (Memoized / Lazy)\n```typescript\n// Only recomputes when count() changes and is actively read\nconst doubleCount = computed(() => this.count() * 2);\n```\n\n#### 3. Effects (Side Effects)\n```typescript\nconstructor() {\n  effect(() => {\n    console.log(`Current count is: ${this.count()}`);\n    localStorage.setItem('counter_val', this.count().toString());\n  });\n}\n```\n\n### Signals vs RxJS Observables\n\n| Feature | Angular Signals | RxJS Observables |\n| :--- | :--- | :--- |\n| **Values** | Synchronous, always has current value | Async stream over time (0, 1, or many values) |\n| **Subscription** | Automatic dependency tracking (no unsub needed!) | Manual subscription management / `async` pipe |\n| **Best Used For** | UI State, component reactivity, forms | Websockets, HTTP, complex async debounce/switchMap |",
+      "references": [
+        {
+          "title": "Angular Official: Signals Overview",
+          "url": "https://angular.dev/guide/signals"
+        }
+      ],
+      "interviewTip": "Highlight that Signals are synchronous and glitch-free (diamond dependency problem solved), while RxJS remains ideal for asynchronous event streams.",
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "fe-ang-002",
+      "title": "Angular Change Detection & OnPush Strategy",
+      "category": "Frontend Engineering",
+      "subcategory": "Angular",
+      "difficulty": "medium",
+      "tags": [
+        "angular",
+        "change-detection",
+        "onpush",
+        "zonejs",
+        "performance"
+      ],
+      "summary": "Master Angular ChangeDetectionStrategy.OnPush, immutability requirements, markForCheck vs detectChanges.",
+      "content": "## Angular Change Detection Deep Dive\n\n### Default vs OnPush Change Detection\n\n#### Default Strategy\nEvery time Zone.js triggers a tick, Angular checks every binding of every active component from top to bottom. For an app with 5,000 expressions, that's 5,000 checks on every keystroke!\n\n#### OnPush Strategy (`ChangeDetectionStrategy.OnPush`)\nAngular skips checking a component and its children unless:\n1. An **`@Input()` reference changes** (by object reference `===`, not deep mutation).\n2. An event originates from the component itself or one of its children (e.g. `(click)`).\n3. An Observable bound via the **`async` pipe** emits a new value.\n4. Change detection is manually requested via `ChangeDetectorRef.markForCheck()`.\n\n```typescript\n@Component({\n  selector: 'app-user-profile',\n  changeDetection: ChangeDetectionStrategy.OnPush,\n  template: `<div>{{ user.name }} ({{ user.role }})</div>`\n})\nexport class UserProfileComponent {\n  @Input() user!: User;\n}\n```\n\n### Immutability is Mandatory with OnPush\n```typescript\n// ❌ Fails to update OnPush component:\nthis.user.name = 'Abhinav'; // Same memory reference!\n\n// ✅ Triggers OnPush change detection:\nthis.user = { ...this.user, name: 'Abhinav' }; // New memory reference!\n```\n\n### `markForCheck()` vs `detectChanges()`\n- **`markForCheck()`**: Marks all ancestors up to the root as dirty. Checked during the next global change detection pass.\n- **`detectChanges()`**: Synchronously runs change detection immediately on this component and its children. Use sparingly to avoid layout thrashing.",
+      "references": [
+        {
+          "title": "Angular Docs: Runtime Performance",
+          "url": "https://angular.dev/best-practices/runtime-performance"
+        }
+      ],
+      "interviewTip": "Emphasize why immutable data structures (spread operator or Immer) are required for OnPush components to detect input changes.",
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "fe-ang-003",
+      "title": "RxJS Operators Deep Dive: switchMap vs mergeMap vs concatMap vs exhaustMap",
+      "category": "Frontend Engineering",
+      "subcategory": "Angular",
+      "difficulty": "hard",
+      "tags": [
+        "angular",
+        "rxjs",
+        "operators",
+        "switchMap",
+        "mergeMap",
+        "concatMap"
+      ],
+      "summary": "Master RxJS higher-order mapping operators for real-time autocomplete search, file uploads, queues, and button spam prevention.",
+      "content": "## RxJS Higher-Order Mapping Operators\n\nWhen an Observable emits items that trigger another inner Observable (e.g. user keystroke triggering an HTTP request), higher-order mapping operators determine concurrency behavior.\n\n```\nComparison Summary:\n├── switchMap  ──► Cancels previous in-flight inner observable (Search/Autocomplete)\n├── concatMap  ──► Queues sequentially in order (Sequential DB writes)\n├── mergeMap   ──► Runs all concurrently in parallel (Bulk uploads)\n└── exhaustMap ──► Ignores new emissions while inner is active (Login/Submit button)\n```\n\n### 1. `switchMap` (Search & Autocomplete)\nCancels any previous HTTP request if a new value arrives before the previous request completed:\n```typescript\nsearchControl.valueChanges.pipe(\n  debounceTime(300),\n  distinctUntilChanged(),\n  switchMap(query => this.http.get(`/api/search?q=${query}`))\n).subscribe(results => this.results = results);\n```\n\n### 2. `exhaustMap` (Submit & Login Buttons)\nIgnores clicks until the active HTTP request finishes. Eliminates double-submission bugs:\n```typescript\nloginButtonClicks.pipe(\n  exhaustMap(() => this.authService.login(credentials))\n).subscribe();\n```\n\n### 3. `concatMap` (Strict FIFO Queuing)\nWaits for inner observable to complete before starting next:\n```typescript\norderIds.pipe(\n  concatMap(id => this.orderService.processOrder(id))\n).subscribe();\n```\n\n### 4. `mergeMap` (Uncontrolled Concurrency)\nRuns all inner observables in parallel. Can overload backend if concurrency is unrestricted:\n```typescript\nfileUploads.pipe(\n  mergeMap(file => this.upload(file), 3) // Optional concurrency limit = 3\n).subscribe();\n```",
+      "references": [
+        {
+          "title": "RxJS Official Documentation",
+          "url": "https://rxjs.dev/guide/operators"
+        }
+      ],
+      "interviewTip": "Remember this mental model: switchMap cancels, concatMap queues, mergeMap parallels, exhaustMap blocks.",
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "fe-js-001",
+      "title": "JavaScript Event Loop, Microtasks & V8 Concurrency",
+      "category": "Frontend Engineering",
+      "subcategory": "JavaScript & TypeScript",
+      "difficulty": "medium",
+      "tags": [
+        "javascript",
+        "event-loop",
+        "v8",
+        "promises",
+        "macrotasks"
+      ],
+      "summary": "Master JavaScript single-threaded concurrency: Call Stack, Microtask queue draining, Macrotask queue, and rendering pipeline.",
+      "content": "## JavaScript Event Loop & Concurrency Model\n\n### The Runtime Architecture\nJavaScript engine (V8/SpiderMonkey) has a single thread with one Call Stack and one Memory Heap. Concurrency is orchestrated by the browser host environment via the **Event Loop**.\n\n```\n┌─────────────────┐       ┌────────────────────────┐\n│   Call Stack    │ ───►  │ Web APIs (DOM, Timers) │\n└─────────────────┘       └───────────┬────────────┘\n         ▲                            │\n         │                            ▼\n┌──────────────────────────────────────────────┐\n│ Microtask Queue: Promises, queueMicrotask    │ ◄── Emptied completely first!\n├──────────────────────────────────────────────┤\n│ Macrotask Queue: setTimeout, setInterval, IO │ ◄── 1 task processed per loop\n└──────────────────────────────────────────────┘\n```\n\n### Output Prediction Puzzle\n```javascript\nconsole.log('A');\n\nsetTimeout(() => {\n  console.log('B');\n  Promise.resolve().then(() => console.log('C'));\n}, 0);\n\nPromise.resolve()\n  .then(() => {\n    console.log('D');\n    queueMicrotask(() => console.log('E'));\n  })\n  .then(() => console.log('F'));\n\nconsole.log('G');\n\n// Output: A, G, D, E, F, B, C\n```\n\n### Step-by-Step Breakdown\n1. Synchronous execution logs `A` and `G`.\n2. Microtask queue runs: `D` executes, queues `E`. Then `E` and `F` finish.\n3. Call stack and microtasks are completely empty.\n4. Event loop dequeues Macrotask: logs `B`, pushes `C` to microtask queue.\n5. Microtask queue drains before next frame: logs `C`.",
+      "references": [
+        {
+          "title": "Jake Archibald: In The Loop",
+          "url": "https://www.youtube.com/watch?v=cCOL7MC4Pl0"
+        }
+      ],
+      "interviewTip": "Remember: All microtasks spawned during the current microtask drain will also execute before the next macrotask is picked up.",
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "fe-js-002",
+      "title": "JavaScript Closures, Lexical Scope & Garbage Collection",
+      "category": "Frontend Engineering",
+      "subcategory": "JavaScript & TypeScript",
+      "difficulty": "medium",
+      "tags": [
+        "javascript",
+        "closures",
+        "memory-leaks",
+        "garbage-collection",
+        "scope"
+      ],
+      "summary": "Understand how lexical environments retain outer variables, the Module Pattern, and common closure memory leak traps.",
+      "content": "## JavaScript Closures & Memory Management\n\n### What is a Closure?\nA closure is the combination of a function bundled together with references to its surrounding state (**lexical environment**). A closure gives an inner function access to an outer function's scope even after the outer function has returned.\n\n```javascript\nfunction createRateLimiter(maxCalls, timeWindowMs) {\n  let callCount = 0;\n  let resetTime = Date.now() + timeWindowMs;\n\n  // The returned function retains access to callCount & resetTime:\n  return function allow() {\n    const now = Date.now();\n    if (now > resetTime) {\n      callCount = 0;\n      resetTime = now + timeWindowMs;\n    }\n    if (callCount < maxCalls) {\n      callCount++;\n      return true;\n    }\n    return false;\n  };\n}\n```\n\n### How V8 Handles Closures & Memory Leaks\nV8 stores function closures on the **Heap**, not the Stack. If an outer variable is referenced by any inner closure, V8 retains that variable in memory.\n\n```javascript\n// ❌ Memory Leak via Accidental Closure:\nfunction attachListener() {\n  const hugeDataPayload = new Array(1000000).fill('secret');\n  \n  // Element event listener retains reference to hugeDataPayload forever!\n  document.getElementById('btn').addEventListener('click', () => {\n    console.log('Button clicked'); \n    // Even if hugeDataPayload is unused here, some JS engines retain the lexical scope!\n  });\n}\n```",
+      "references": [
+        {
+          "title": "MDN: Closures",
+          "url": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Closures"
+        }
+      ],
+      "interviewTip": "Always mention practical uses: Data privacy (private variables before # private fields), factory functions, and memoization.",
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "fe-ts-001",
+      "title": "TypeScript Advanced Generics, Infer & Discriminated Unions",
+      "category": "Frontend Engineering",
+      "subcategory": "JavaScript & TypeScript",
+      "difficulty": "hard",
+      "tags": [
+        "typescript",
+        "generics",
+        "infer",
+        "discriminated-unions",
+        "type-guards"
+      ],
+      "summary": "Master conditional types, keyof, infer, discriminating unions, and building reusable polymorphic React components.",
+      "content": "## Advanced TypeScript for Production Applications\n\n### 1. Discriminated Unions (The Most Important Pattern)\n```typescript\ntype AsyncState<T> =\n  | { status: 'idle'; data: null; error: null }\n  | { status: 'loading'; data: null; error: null }\n  | { status: 'success'; data: T; error: null }\n  | { status: 'error'; data: null; error: Error };\n\nfunction renderUI(state: AsyncState<User>) {\n  switch (state.status) {\n    case 'loading': return <Spinner />;\n    case 'error': return <Alert message={state.error.message} />; // Type-safe!\n    case 'success': return <Profile user={state.data} />;         // Type-safe!\n  }\n}\n```\n\n### 2. Conditional Types with `infer`\nExtract the resolved type from any Promise or async function:\n```typescript\ntype AwaitedReturnType<T> = T extends (...args: any[]) => Promise<infer R> ? R : never;\n\nasync function fetchUser() {\n  return { id: 1, name: 'Abhinav', role: 'Staff SWE' };\n}\n\ntype UserData = AwaitedReturnType<typeof fetchUser>;\n// type UserData = { id: number; name: string; role: string; }\n```\n\n### 3. Polymorphic Component Props in React\n```tsx\ntype PolymorphicProps<T extends React.ElementType> = {\n  as?: T;\n  children: React.ReactNode;\n} & React.ComponentPropsWithoutRef<T>;\n\nexport function Button<T extends React.ElementType = 'button'>({\n  as,\n  children,\n  ...props\n}: PolymorphicProps<T>) {\n  const Component = as || 'button';\n  return <Component className=\"btn-base\" {...props}>{children}</Component>;\n}\n\n// Can be used as a native button or an anchor tag with full prop validation:\n<Button as=\"a\" href=\"https://github.com\">Portfolio Link</Button>\n```",
+      "references": [
+        {
+          "title": "TypeScript Handbook: Conditional Types",
+          "url": "https://www.typescriptlang.org/docs/handbook/2/conditional-types.html"
+        }
+      ],
+      "interviewTip": "Discriminated unions prevent illegal states from ever being represented in your React UI. Use this phrase in interviews.",
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "fe-perf-001",
+      "title": "Core Web Vitals & Frontend Performance Optimization",
+      "category": "Frontend Engineering",
+      "subcategory": "Performance & Architecture",
+      "difficulty": "hard",
+      "tags": [
+        "web-vitals",
+        "lcp",
+        "inp",
+        "cls",
+        "code-splitting",
+        "performance"
+      ],
+      "summary": "Optimize LCP (<2.5s), INP (<200ms), and CLS (<0.1) across the Critical Rendering Path with code splitting and modern bundling.",
+      "content": "## Core Web Vitals & Web Performance\n\n### The Three Core Metrics\n\n| Metric | Definition | Target | Common Culprits & Mitigations |\n| :--- | :--- | :--- | :--- |\n| **LCP** (Largest Contentful Paint) | Render time of largest above-the-fold image/text block. | **< 2.5s** | Slow TTFB, render-blocking scripts, large hero images. Fix with preloading and `fetchpriority=\"high\"`. |\n| **INP** (Interaction to Next Paint) | Page responsiveness to clicks, taps, keypresses (replaced FID). | **< 200ms** | Long JavaScript tasks blocking main thread. Fix with `scheduler.yield()`, web workers, and code splitting. |\n| **CLS** (Cumulative Layout Shift) | Unexpected visual layout shifts during session. | **< 0.1** | Images/ads lacking explicit aspect ratio, dynamic banner insertions. Fix with CSS `aspect-ratio`. |\n\n### Critical Rendering Path (CRP) Optimization\n```\n1. HTML ──► DOM\n                ├──► Render Tree ──► Layout (Reflow) ──► Paint ──► Composite\n2. CSS  ──► CSSOM ──┘\n```\n\n- **`defer` vs `async`**:\n  - `defer`: Downloads in background, executes in document order **after** DOM parsing is complete.\n  - `async`: Downloads in background, interrupts parser and executes immediately upon download.",
+      "references": [
+        {
+          "title": "Google Web.dev: Core Web Vitals",
+          "url": "https://web.dev/explore/learn-core-web-vitals"
+        }
+      ],
+      "interviewTip": "Emphasize that INP evaluates the longest interaction throughout the entire session lifecycle, not just initial load.",
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "fe-sec-001",
+      "title": "Frontend Security: XSS, CSRF & Token Storage Debate",
+      "category": "Frontend Engineering",
+      "subcategory": "Performance & Architecture",
+      "difficulty": "medium",
+      "tags": [
+        "security",
+        "xss",
+        "csrf",
+        "csp",
+        "jwt",
+        "cookies"
+      ],
+      "summary": "Protect client-side applications against Cross-Site Scripting (XSS), CSRF attacks, and implement secure JWT storage.",
+      "content": "## Frontend Security Architecture\n\n### 1. Cross-Site Scripting (XSS)\nAttacker injects malicious JavaScript executed in the user's browser session:\n- **Stored XSS**: Payload saved in database (e.g. comment field).\n- **Reflected XSS**: Payload embedded in URL search query.\n- **DOM-based XSS**: Insecure client script manipulation (`element.innerHTML = userInput`).\n\n```javascript\n// ✅ Safe: React automatically escapes strings inside JSX\n<div>{userComment}</div>\n\n// ✅ Sanitization if rich HTML is mandatory\nimport DOMPurify from 'dompurify';\n<div dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(userContent) }} />\n```\n\n### 2. JWT Storage Debate: LocalStorage vs HttpOnly Cookie\n\n| Storage | XSS Vulnerability | CSRF Vulnerability | Production Recommendation |\n| :--- | :--- | :--- | :--- |\n| **LocalStorage** | ❌ Vulnerable (Any JS snippet reads `localStorage.getItem`) | ✅ Immune (Cannot be sent automatically by browser) | Avoid for high-value session tokens |\n| **HttpOnly Cookie** | ✅ Immune to JavaScript theft | ⚠️ Vulnerable if SameSite not set | **Recommended**: `HttpOnly; Secure; SameSite=Strict` |\n\n### 3. Content Security Policy (CSP)\nHTTP response header restricting allowed script/media origin domains:\n```http\nContent-Security-Policy: default-src 'self'; script-src 'self' https://trusted-cdn.com; object-src 'none';\n```",
+      "references": [
+        {
+          "title": "OWASP Top Ten Frontend Vulnerabilities",
+          "url": "https://owasp.org/www-project-top-ten/"
+        }
+      ],
+      "interviewTip": "Explain why storing access tokens in memory (React state) + refresh tokens in HttpOnly SameSite=Strict cookies is the gold standard for SPAs.",
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    }
+  ]
+}

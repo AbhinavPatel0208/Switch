@@ -1,0 +1,456 @@
+{
+  "category": "Data Engineering",
+  "icon": "HiChartBar",
+  "color": "#10b981",
+  "subcategories": [
+    "Apache Kafka",
+    "Apache Flink",
+    "Redis & Caching",
+    "Stream Processing Patterns"
+  ],
+  "topics": [
+    {
+      "id": "de-kafka-001",
+      "title": "Kafka Architecture, Partitions & High-Throughput Commit Log",
+      "category": "Data Engineering",
+      "subcategory": "Apache Kafka",
+      "difficulty": "hard",
+      "tags": [
+        "kafka",
+        "partitions",
+        "commit-log",
+        "zero-copy",
+        "page-cache"
+      ],
+      "summary": "Deep dive into Kafka broker clustering, sequential I/O, zero-copy sendfile, and partition rebalancing.",
+      "content": "## Apache Kafka Architecture & Storage Internals\n\n### Partitioning & High-Throughput Storage\nKafka topics are divided into ordered, immutable sequences of records called **partitions**. Each partition is backed by an append-only commit log on disk.\n\n```\nTopic: payment-transactions (3 Partitions, Replication Factor = 3)\n\nPartition 0: [Offset 0, 1, 2, 3, 4, 5] ──► Leader: Broker 1 (Replicas: B2, B3)\nPartition 1: [Offset 0, 1, 2, 3, 4]    ──► Leader: Broker 2 (Replicas: B1, B3)\nPartition 2: [Offset 0, 1, 2, 3, 4, 5] ──► Leader: Broker 3 (Replicas: B1, B2)\n```\n\n- **Zero-Copy Data Transfer (`sendfile` system call)**: Kafka avoids copying data into JVM application memory. Data is transferred directly from the OS Page Cache to the network NIC socket buffer, bypassing user-space CPU context switches completely!\n\n### Consumer Group & Cooperative Rebalancing\nHistorically, Kafka rebalancing triggered a \"Stop-The-World\" Eager Rebalance, revoking all partitions from all consumers.\n- Modern Kafka uses **Cooperative Sticky Assignor (`CooperativeStickyAssignor`)**: Only the specific partitions migrating to another consumer are revoked, allowing ongoing processing without pausing the entire consumer group!",
+      "references": [
+        {
+          "title": "Kafka: The Definitive Guide",
+          "url": "https://www.confluent.io/resources/kafka-the-definitive-guide/"
+        }
+      ],
+      "interviewTip": "Emphasize how 'sendfile' zero-copy transfers data directly from OS page cache to network socket buffer without entering JVM user-space memory.",
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "de-kafka-002",
+      "title": "Kafka Exactly-Once Semantics (EOS) & Transactional Producer",
+      "category": "Data Engineering",
+      "subcategory": "Apache Kafka",
+      "difficulty": "expert",
+      "tags": [
+        "kafka",
+        "exactly-once",
+        "transactions",
+        "idempotence",
+        "offsets"
+      ],
+      "summary": "How Kafka eliminates duplicate writes and achieves atomic multi-topic processing with idempotent producers and transactions.",
+      "content": "## Kafka Exactly-Once Processing (EOS)\n\n### 1. Idempotent Producer (`enable.idempotence=true`)\nSolves network duplicate writes when an ACK from broker to producer drops:\n- Broker assigns a unique **Producer ID (PID)**.\n- Producer assigns monotonically increasing sequence numbers ($0, 1, 2\\dots$) per partition.\n- If broker receives sequence number $\\le$ last committed, it quietly discards duplicate without duplicating log entry.\n\n### 2. Kafka Transactions (Atomic Read-Process-Write)\nAllows publishing output messages AND committing consumer input offsets inside a single atomic transaction:\n\n```java\nprops.put(ProducerConfig.TRANSACTIONAL_ID_CONFIG, \"tx-order-processor-1\");\nKafkaProducer<String, String> producer = new KafkaProducer<>(props);\nproducer.initTransactions();\n\ntry {\n    producer.beginTransaction();\n    \n    // 1. Publish processed business event to output topic\n    producer.send(new ProducerRecord<>(\"orders-processed\", orderId, payload));\n    \n    // 2. Commit input consumer partition offsets atomically within same transaction!\n    producer.sendOffsetsToTransaction(currentConsumerOffsets, \"order-group\");\n    \n    producer.commitTransaction();\n} catch (ProducerFencedException e) {\n    producer.close(); // Fenced by another zombie instance\n} catch (KafkaException e) {\n    producer.abortTransaction(); // Rolls back both offsets and messages!\n}\n```\n\n### Downstream Consumer Isolation\nDownstream consumers must configure:\n```properties\nisolation.level=read_committed\n```\nThis ensures consumers only read messages from successfully committed transactions, hiding uncommitted or aborted messages behind the **Last Stable Offset (LSO)**.",
+      "references": [
+        {
+          "title": "Confluent: Exactly-Once Processing in Kafka",
+          "url": "https://www.confluent.io/blog/exactly-once-semantics-are-possible-heres-how-apache-kafka-does-it/"
+        }
+      ],
+      "interviewTip": "Explain why downstream consumers need 'isolation.level=read_committed'. Without this flag, consumers read uncommitted messages (dirty reads) regardless of producer transactions.",
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "de-flink-001",
+      "title": "Apache Flink: State Backends, RocksDB & Checkpointing",
+      "category": "Data Engineering",
+      "subcategory": "Apache Flink",
+      "difficulty": "expert",
+      "tags": [
+        "flink",
+        "stream-processing",
+        "rocksdb",
+        "checkpointing",
+        "state-management"
+      ],
+      "summary": "Stateful stream processing with RocksDB, asynchronous barrier alignment (Chandy-Lamport), State TTL, and savepoint recovery.",
+      "content": "## Apache Flink: Production State & Fault Tolerance\n\n### Keyed State Primitives\nFlink maintains local state per key for high throughput without remote database lookups:\n\n```java\npublic class TransactionDeduplicator extends KeyedProcessFunction<String, Transaction, Transaction> {\n    private transient MapState<String, Long> processedTxns;\n\n    @Override\n    public void open(Configuration parameters) {\n        MapStateDescriptor<String, Long> descriptor = \n            new MapStateDescriptor<>(\"tx-state\", String.class, Long.class);\n            \n        // Auto-expire state to prevent memory bloat:\n        StateTtlConfig ttlConfig = StateTtlConfig.newBuilder(Time.hours(24))\n            .setUpdateType(StateTtlConfig.UpdateType.OnCreateAndWrite)\n            .cleanupFullSnapshot()\n            .build();\n            \n        descriptor.enableTimeToLive(ttlConfig);\n        processedTxns = getRuntimeContext().getMapState(descriptor);\n    }\n\n    @Override\n    public void processElement(Transaction txn, Context ctx, Collector<Transaction> out) throws Exception {\n        if (!processedTxns.contains(txn.getId())) {\n            processedTxns.put(txn.getId(), ctx.timestamp());\n            out.collect(txn);\n        }\n    }\n}\n```\n\n### State Backend Selection\n\n| Feature | HashMapStateBackend | EmbeddedRocksDBStateBackend |\n| :--- | :--- | :--- |\n| **Storage** | JVM Heap memory | Off-heap RocksDB (C++ embedded KV store) |\n| **State Size** | Bound by JVM RAM (GBs) | Disk-bound (Terabytes per node) |\n| **Checkpoints** | Full state copy | **Incremental checkpoints** (only new SST files) |\n| **Speed** | Nanoseconds (in-memory) | Microseconds (deserialization overhead) |\n\n### Checkpointing via Asynchronous Barrier Snapshotting (ABS)\nFlink uses a variant of the **Chandy-Lamport algorithm**:\n1. JobManager injects **Checkpoint Barriers** into source streams.\n2. Barriers flow with event stream through operators.\n3. Operator aligns barriers from all inputs (or uses unaligned checkpoints for high backpressure).\n4. Operator takes a state snapshot asynchronously and uploads SST files to S3/HDFS without halting stream processing.",
+      "references": [
+        {
+          "title": "Apache Flink Docs: State Backends & Checkpointing",
+          "url": "https://nightlies.apache.org/flink/flink-docs-stable/docs/dev/datastream/fault-tolerance/state/"
+        }
+      ],
+      "interviewTip": "Relate directly to your resume: Mention optimizing RocksDB block cache and fixing skewed key partitioning that previously caused TaskManager backpressure.",
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "de-flink-002",
+      "title": "Flink Event Time, Watermarks & Late Data Handling via Side Outputs",
+      "category": "Data Engineering",
+      "subcategory": "Apache Flink",
+      "difficulty": "hard",
+      "tags": [
+        "flink",
+        "watermarks",
+        "event-time",
+        "late-events",
+        "side-outputs"
+      ],
+      "summary": "Master Flink time semantics: Event Time vs Processing Time, Bounded-Out-Of-Orderness watermarks, and DLQ routing with OutputTag.",
+      "content": "## Flink Event Time & Late Data Handling\n\n### Time Semantics\n- **Event Time**: Timestamp embedded inside the record when event originally occurred at source (e.g. mobile app click). Immutable and deterministic.\n- **Processing Time**: Wall-clock time on the TaskManager machine executing the operator. Fast, but non-deterministic on replaying stream.\n\n### Watermarks (Tolerating Network Jitter)\nA Watermark $W(t)$ is a control record asserting: *\"We assume all events with timestamp $\\le t$ have already arrived.\"*\n\n```java\nWatermarkStrategy<TransactionEvent> watermarkStrategy = WatermarkStrategy\n    .<TransactionEvent>forBoundedOutOfOrderness(Duration.ofSeconds(10))\n    .withTimestampAssigner((event, timestamp) -> event.getEventTimestamp());\n```\n\n### Late Events Handling with Side Outputs (`OutputTag`)\nWhen an event arrives after the watermark has already advanced past its window end time:\n\n```java\nfinal OutputTag<TransactionEvent> lateDataTag = new OutputTag<TransactionEvent>(\"late-transactions\"){};\n\nSingleOutputStreamOperator<AggregatedResult> windowedStream = source\n    .assignTimestampsAndWatermarks(watermarkStrategy)\n    .keyBy(TransactionEvent::getUserId)\n    .window(TumblingEventTimeWindows.of(Time.minutes(5)))\n    .sideOutputLateData(lateDataTag) // Route late events to side output!\n    .aggregate(new VolumeAggregator());\n\n// Extract late data stream and route to Kafka Dead-Letter-Queue (DLQ):\nDataStream<TransactionEvent> lateStream = windowedStream.getSideOutput(lateDataTag);\nlateStream.sinkTo(kafkaDlqSink);\n```",
+      "references": [
+        {
+          "title": "Flink Event Time & Watermarks Guide",
+          "url": "https://nightlies.apache.org/flink/flink-docs-stable/docs/concepts/time-analysis/"
+        }
+      ],
+      "interviewTip": "Explain why side outputs are superior to throwing late events away or setting large allowedLateness() values (which re-emits mutating window updates).",
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "de-redis-001",
+      "title": "Redis Caching Patterns, Stampede & Distributed Mutex",
+      "category": "Data Engineering",
+      "subcategory": "Redis & Caching",
+      "difficulty": "medium",
+      "tags": [
+        "redis",
+        "caching",
+        "cache-stampede",
+        "cache-aside",
+        "write-behind"
+      ],
+      "summary": "Master Cache-Aside, Write-Through, Write-Behind, TTL jittering, and distributed lock caching strategies.",
+      "content": "## Redis Caching Patterns & Reliability\n\n### Caching Topologies\n\n#### 1. Cache-Aside (Lazy Loading)\nApplication queries cache first. On miss, reads from DB and populates cache.\n```\nRead: App ──(1. Check)──► Redis\n      │ (2. Miss)\n      ▼\n     DB ──(3. Return)──► App ──(4. Save with TTL)──► Redis\n```\n\n#### 2. Write-Through vs Write-Behind\n- **Write-Through**: Application writes to Cache, and Cache synchronously writes to DB before responding. Guarantees consistency at the cost of write latency.\n- **Write-Behind (Write-Back)**: Application writes to Cache immediately. Cache batches and asynchronously writes to DB in the background. High write throughput, risk of data loss on cache node crash.\n\n### Cache Stampede (Thundering Herd) & Solutions\nWhen a popular cache key expires, thousands of concurrent requests miss simultaneously, crashing the database.\n\n#### Solution: Distributed Mutex via Redis `SET NX EX`\n```java\npublic Product getProductWithLock(String id) {\n    String cacheKey = \"product:\" + id;\n    Product product = redisTemplate.opsForValue().get(cacheKey);\n    if (product != null) return product;\n\n    String lockKey = \"lock:product:\" + id;\n    Boolean acquired = redisTemplate.opsForValue().setIfAbsent(lockKey, \"locked\", Duration.ofSeconds(5));\n    \n    if (Boolean.TRUE.equals(acquired)) {\n        try {\n            product = dbRepository.findById(id).orElseThrow();\n            redisTemplate.opsForValue().set(cacheKey, product, Duration.ofMinutes(30));\n            return product;\n        } finally {\n            redisTemplate.delete(lockKey);\n        }\n    } else {\n        // Wait 50ms and retry from cache\n        Thread.sleep(50);\n        return getProductWithLock(id);\n    }\n}\n```",
+      "references": [
+        {
+          "title": "Redis Official Guide: Cache Patterns",
+          "url": "https://redis.io/solutions/caching/"
+        }
+      ],
+      "interviewTip": "Always mention adding TTL Jitter (e.g., base TTL 30 mins + random(0, 300) seconds) to prevent simultaneous mass-expiration of keys.",
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "de-redis-002",
+      "title": "Redis Streams vs Pub/Sub & Consumer Groups Architecture",
+      "category": "Data Engineering",
+      "subcategory": "Redis & Caching",
+      "difficulty": "hard",
+      "tags": [
+        "redis",
+        "streams",
+        "pub-sub",
+        "message-broker",
+        "consumer-groups"
+      ],
+      "summary": "Compare Redis Pub/Sub (fire-and-forget) with Redis Streams (persistent log, consumer groups, XACK, and pending entries list).",
+      "content": "## Redis Streams vs Redis Pub/Sub\n\n### Architectural Comparison\n\n| Attribute | Redis Pub/Sub | Redis Streams (Redis 5+) |\n| :--- | :--- | :--- |\n| **Persistence** | None (Fire-and-forget, dropped if consumer disconnected) | **Yes** (Append-only memory log on disk with RDB/AOF) |\n| **Consumer Groups** | No (Every subscriber receives every message) | **Yes** (Load balances messages across consumer group) |\n| **Message ACK** | None | **Yes** (`XACK` removes from Pending Entries List) |\n| **History Replay** | No | **Yes** (Read historical events via offset/ID) |\n| **Best For** | Chat rooms, real-time metrics push | Lightweight event queue, async task pipelines |\n\n### Redis Streams Workflow\n```\nProducer ──(XADD mystream * user \"Abhinav\")──► Redis Stream (Log)\n                                                    │\n                   ┌────────────────────────────────┴──────────────────────────────┐\n                   ▼                                                               ▼\n        Consumer Group Worker 1                                         Consumer Group Worker 2\n     (Reads via XREADGROUP)                                          (Reads via XREADGROUP)\n            │                                                               │\n     Processes event                                                 Processes event\n            │                                                               │\n     Sends XACK mystream group1 <id>                                 Sends XACK mystream group1 <id>\n```\n\n### Inspecting Crashed Workers: Pending Entries List (PEL)\nIf a worker crashes while processing a message, the message stays in the **Pending Entries List (PEL)**. Another worker can claim and reprocess it using `XAUTOCLAIM`:\n```bash\nXAUTOCLAIM mystream mygroup worker-2 60000 0-0 COUNT 10\n```",
+      "references": [
+        {
+          "title": "Redis Documentation: Introduction to Redis Streams",
+          "url": "https://redis.io/docs/latest/develop/data-types/streams/"
+        }
+      ],
+      "interviewTip": "Explain why Redis Pub/Sub cannot replace Kafka/RabbitMQ (unacknowledged messages are lost forever), whereas Redis Streams provides persistent consumer groups.",
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "de-kafka-003",
+      "title": "Kafka Consumer Groups, Rebalancing & Partition Assignment",
+      "category": "Data Engineering",
+      "subcategory": "Apache Kafka",
+      "difficulty": "hard",
+      "tags": [
+        "kafka",
+        "consumer-groups",
+        "rebalancing",
+        "partition-assignment",
+        "consumer-lag"
+      ],
+      "summary": "Consumer group protocol, eager vs cooperative rebalancing, partition assignors, and consumer lag monitoring strategies.",
+      "content": "## Kafka Consumer Groups & Rebalancing Deep Dive\n\n### Consumer Group Protocol\nA **Consumer Group** is a set of consumers sharing the same `group.id` that collectively consume all partitions of a topic. Each partition is assigned to exactly one consumer at a time — this is the unit of parallelism.\n\n```\nTopic: orders (6 Partitions)\n\nConsumer Group: order-processors\n┌─────────────────────────────────────────────────┐\n│  Consumer A  ──►  Partition 0, Partition 1      │\n│  Consumer B  ──►  Partition 2, Partition 3      │\n│  Consumer C  ──►  Partition 4, Partition 5      │\n└─────────────────────────────────────────────────┘\nNote: max useful consumers = number of partitions\n```\n\nOne consumer in the group is elected **Group Leader** by the **Group Coordinator** (a Kafka broker). The leader runs the partition assignment algorithm and sends the result back to the coordinator, which distributes assignments.\n\n### Rebalancing: Eager vs Cooperative\n\n#### Eager Rebalancing (Classic — Pre Kafka 2.4)\n1. All consumers **stop processing** and revoke all assigned partitions.\n2. All consumers rejoin the group and send `JoinGroup` requests.\n3. Leader assigns partitions fresh; coordinator distributes via `SyncGroup`.\n4. Consumers resume — **complete stop-the-world pause** regardless of how few partitions moved.\n\n#### Cooperative (Incremental) Rebalancing (Kafka 2.4+)\nOnly partitions that *need* to move are revoked; consumers keep processing the rest:\n1. **Round 1**: Consumers rejoin, leader computes new assignment and marks which partitions to revoke.\n2. Affected consumers revoke only those specific partitions.\n3. **Round 2**: Revoked partitions reassigned. All other consumers kept processing throughout.\n\n```\n# Enable cooperative rebalancing in consumer config\npartition.assignment.strategy=org.apache.kafka.clients.consumer.CooperativeStickyAssignor\n```\n\n### Partition Assignors Comparison\n\n| Assignor | Strategy | Sticky? | Cooperative? |\n| :--- | :--- | :--- | :--- |\n| **RangeAssignor** | Contiguous range per topic | No | No |\n| **RoundRobinAssignor** | Round-robin across all partitions | No | No |\n| **StickyAssignor** | Minimize movement on rebalance | Yes | No (eager) |\n| **CooperativeStickyAssignor** | Sticky + incremental rebalance | Yes | **Yes** |\n\n**RangeAssignor** can cause uneven distribution: with 3 topics of 7 partitions each, Consumer A always gets partition 0 from every topic (9 partitions) while Consumer D gets only 6.\n\n**CooperativeStickyAssignor** is the recommended production choice — it minimizes partition movement AND avoids stop-the-world pauses.\n\n### Consumer Lag Monitoring\nConsumer lag = latest partition offset (Log End Offset) minus the consumer's committed offset.\n\n```bash\n# Check lag via kafka-consumer-groups CLI\nkafka-consumer-groups.sh \\\n  --bootstrap-server broker:9092 \\\n  --group order-processors \\\n  --describe\n\n# Output:\n# GROUP            TOPIC    PARTITION  CURRENT-OFFSET  LOG-END-OFFSET  LAG\n# order-processors orders   0          1540            1800            260\n# order-processors orders   1          2100            2100            0\n```\n\n**JMX Metrics to Monitor:**\n- `kafka.consumer:type=consumer-fetch-manager-metrics,client-id=*,attribute=records-lag-max` — max lag across all partitions\n- `kafka.consumer:type=consumer-fetch-manager-metrics,attribute=records-lag-avg`\n\n**Spring Boot Kafka Lag via Actuator:**\n```yaml\nmanagement:\n  endpoints:\n    web:\n      exposure:\n        include: health,metrics\nspring:\n  kafka:\n    consumer:\n      group-id: order-processors\n      auto-offset-reset: earliest\n      enable-auto-commit: false\n```\n\n### Static Group Membership\nFrequent restarts (e.g., rolling deploys) trigger repeated rebalances. **Static membership** prevents this:\n```properties\ngroup.instance.id=consumer-pod-1\nsession.timeout.ms=300000  # 5 minutes — don't trigger rebalance until timeout\n```\nThe consumer rejoins with the same instance ID and reclaims its previous partitions without triggering a full rebalance.",
+      "interviewTip": "When asked about rebalancing, always distinguish eager (stop-the-world, all partitions revoked) from cooperative (incremental, only moved partitions revoked). Mention that CooperativeStickyAssignor is the modern default and dramatically reduces processing gaps in high-throughput systems.",
+      "references": [
+        {
+          "title": "Confluent: Incremental Cooperative Rebalancing",
+          "url": "https://www.confluent.io/blog/incremental-cooperative-rebalancing-in-kafka/"
+        },
+        {
+          "title": "Kafka Consumer Group Protocol",
+          "url": "https://kafka.apache.org/documentation/#impl_consumer"
+        }
+      ],
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "de-kafka-004",
+      "title": "Kafka Streams: KStream, KTable & Stateful Operations",
+      "category": "Data Engineering",
+      "subcategory": "Apache Kafka",
+      "difficulty": "hard",
+      "tags": [
+        "kafka-streams",
+        "kstream",
+        "ktable",
+        "stateful",
+        "joins",
+        "exactly-once"
+      ],
+      "summary": "KStream vs KTable abstractions, stream-table joins, windowed aggregations with state stores, and exactly-once semantics in Kafka Streams.",
+      "content": "## Kafka Streams: KStream, KTable & Stateful Processing\n\n### KStream vs KTable\n\n| Concept | KStream | KTable |\n| :--- | :--- | :--- |\n| **Abstraction** | Infinite event stream (each record is an independent event) | Changelog stream (latest value per key = materialized view) |\n| **Semantics** | Append — every record is meaningful | Upsert — new record with same key overwrites previous |\n| **Analogy** | INSERT-only database log | Current state of a database table |\n| **Compaction** | No | Yes (Kafka log compaction keeps only latest per key) |\n\n```java\nStreamsBuilder builder = new StreamsBuilder();\n\n// KStream: every payment event matters\nKStream<String, Payment> payments = builder.stream(\"payments\");\n\n// KTable: latest account balance per accountId\nKTable<String, AccountBalance> balances = builder.table(\"account-balances\",\n    Materialized.as(\"balances-store\"));\n```\n\n### Join Types in Kafka Streams\n\n#### Stream-Table Join (Enrichment Pattern)\nEnrich each event with the current state of a table — no window needed because the table represents current state:\n\n```java\nKStream<String, EnrichedPayment> enriched = payments.join(\n    balances,\n    (payment, balance) -> new EnrichedPayment(payment, balance.getAvailableFunds()),\n    Joined.with(Serdes.String(), paymentSerde, balanceSerde)\n);\n```\n\n#### Stream-Stream Join (Windowed Correlation)\nCorrelate two event streams within a time window — both sides are unbounded, so a window bounds the join:\n\n```java\nKStream<String, ClickEvent> clicks = builder.stream(\"user-clicks\");\nKStream<String, PurchaseEvent> purchases = builder.stream(\"purchases\");\n\nKStream<String, ClickPurchaseCorrelation> correlated = clicks.join(\n    purchases,\n    (click, purchase) -> new ClickPurchaseCorrelation(click, purchase),\n    JoinWindows.ofTimeDifferenceWithNoGrace(Duration.ofMinutes(30)),\n    StreamJoined.with(Serdes.String(), clickSerde, purchaseSerde)\n);\n```\n\n### Stateful Aggregations with State Stores\n\n```java\nKGroupedStream<String, Payment> groupedPayments = payments\n    .groupByKey(Grouped.with(Serdes.String(), paymentSerde));\n\nKTable<Windowed<String>, Long> paymentCounts = groupedPayments\n    .windowedBy(TimeWindows.ofSizeWithNoGrace(Duration.ofHours(1)))\n    .count(Materialized.<String, Long, WindowStore<Bytes, byte[]>>as(\"payment-count-store\"));\n\n// Query state store interactively (for microservice API)\nReadOnlyWindowStore<String, Long> store = streams.store(\n    StoreQueryParameters.fromNameAndType(\"payment-count-store\", QueryableStoreTypes.windowStore())\n);\nlong count = store.fetch(\"user-123\", windowStart, windowEnd);\n```\n\n### Topology Description\nAlways print your topology for debugging:\n\n```java\nTopology topology = builder.build();\nSystem.out.println(topology.describe());\n// Prints: Source -> Processor -> Sink with state stores\n```\n\n### Exactly-Once with Kafka Streams\n```java\nProperties props = new Properties();\nprops.put(StreamsConfig.PROCESSING_GUARANTEE_CONFIG, StreamsConfig.EXACTLY_ONCE_V2);\n// EXACTLY_ONCE_V2 uses one transaction per task (more efficient than EXACTLY_ONCE)\n// Requires: Kafka broker >= 2.5, replication factor >= 3 for changelog topics\n```\n\n**EXACTLY_ONCE_V2** introduces per-task transactions (rather than per-thread in v1), reducing the number of open transactions and improving throughput significantly.\n\n### KStream vs Direct Kafka Consumer: When to Choose\n- **Kafka Streams**: When you need joins, aggregations, windowing, or interactive queries — it handles state management, fault tolerance, and changelog topics automatically.\n- **Raw Kafka Consumer**: Simple event processing, fire-and-forget transformations, or when running inside a framework (Spring Kafka) that provides enough abstraction.",
+      "interviewTip": "Interviewers love asking about stream-table joins vs stream-stream joins. Key distinction: stream-table joins don't need a window (table is current state), while stream-stream joins always need a window because both sides are unbounded. Also clarify that KTable is backed by a compacted topic.",
+      "references": [
+        {
+          "title": "Kafka Streams Developer Guide",
+          "url": "https://kafka.apache.org/documentation/streams/"
+        },
+        {
+          "title": "Confluent: Kafka Streams Interactive Queries",
+          "url": "https://docs.confluent.io/platform/current/streams/developer-guide/interactive-queries.html"
+        }
+      ],
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "de-schema-001",
+      "title": "Schema Registry & Avro Serialization",
+      "category": "Data Engineering",
+      "subcategory": "Apache Kafka",
+      "difficulty": "medium",
+      "tags": [
+        "schema-registry",
+        "avro",
+        "serialization",
+        "schema-evolution",
+        "compatibility"
+      ],
+      "summary": "Why schema evolution matters in event-driven systems, Avro binary encoding, Schema Registry compatibility modes, and Spring Boot integration.",
+      "content": "## Schema Registry & Avro Serialization\n\n### Why Schema Evolution Matters\nIn event-driven architectures, producers and consumers are **decoupled** — they deploy independently. Without a contract, a producer adding a new field breaks consumers expecting the old schema, and a producer removing a field breaks consumers that depend on it.\n\n**Schema Registry** solves this by:\n1. Storing versioned schemas centrally (Confluent Schema Registry, AWS Glue, Apicurio)\n2. Enforcing compatibility rules before a new schema version is registered\n3. Embedding only a schema ID (4 bytes) in every Kafka message instead of the full schema\n\n```\nKafka Message Wire Format (with Schema Registry):\n┌─────┬────────────┬──────────────────────────────┐\n│ 0x0 │ Schema ID  │  Avro Binary Payload          │\n│(1B) │  (4 bytes) │  (compact, no field names)    │\n└─────┴────────────┴──────────────────────────────┘\n```\n\n### Apache Avro: Schema Definition\n\n```json\n{\n  \"type\": \"record\",\n  \"name\": \"PaymentEvent\",\n  \"namespace\": \"com.example.payments\",\n  \"fields\": [\n    {\"name\": \"paymentId\", \"type\": \"string\"},\n    {\"name\": \"amount\",    \"type\": \"double\"},\n    {\"name\": \"currency\",  \"type\": \"string\"},\n    {\"name\": \"userId\",    \"type\": \"string\"},\n    {\"name\": \"metadata\",  \"type\": [\"null\", \"string\"], \"default\": null}\n  ]\n}\n```\n\n**Avro advantages over JSON:**\n- Binary encoding (3-10x smaller than JSON)\n- No field names in payload — schema stored separately\n- Strong typing with null safety via union types\n- Native support for schema evolution\n\n### Compatibility Modes\n\n| Mode | New Schema Can... | Old Consumers Can Read New? | New Consumers Can Read Old? |\n| :--- | :--- | :--- | :--- |\n| **BACKWARD** | Add optional fields, remove fields | Yes (with defaults) | No guarantee |\n| **FORWARD** | Add fields, remove optional fields | No guarantee | Yes |\n| **FULL** | Only add optional fields (with defaults) | Yes | Yes |\n| **NONE** | Anything | Not enforced | Not enforced |\n\n**Production recommendation**: Use **FULL** or **BACKWARD** compatibility. Always add new fields with defaults (`\"default\": null`).\n\n### Schema Registry REST API\n\n```bash\n# Register a new schema version\ncurl -X POST http://schema-registry:8081/subjects/payments-value/versions \\\n  -H \"Content-Type: application/vnd.schemaregistry.v1+json\" \\\n  -d '{\"schema\": \"{\\\"type\\\":\\\"record\\\",\\\"name\\\":\\\"PaymentEvent\\\",...}\"}'\n\n# Check compatibility before deploying\ncurl -X POST http://schema-registry:8081/compatibility/subjects/payments-value/versions/latest \\\n  -H \"Content-Type: application/vnd.schemaregistry.v1+json\" \\\n  -d '{\"schema\": \"...new schema...\"}'\n# Response: {\"is_compatible\": true}\n\n# List all versions\ncurl http://schema-registry:8081/subjects/payments-value/versions\n```\n\n### Spring Boot Configuration\n\n```yaml\nspring:\n  kafka:\n    bootstrap-servers: kafka:9092\n    producer:\n      key-serializer: org.apache.kafka.common.serialization.StringSerializer\n      value-serializer: io.confluent.kafka.serializers.KafkaAvroSerializer\n    consumer:\n      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer\n      value-deserializer: io.confluent.kafka.serializers.KafkaAvroDeserializer\n    properties:\n      schema.registry.url: http://schema-registry:8081\n      specific.avro.reader: true  # Deserialize to generated Java class, not GenericRecord\n      auto.register.schemas: false  # Never auto-register in production!\n```\n\n### Protobuf Alternative\nGoogle Protobuf is another binary serialization format with Schema Registry support:\n- **Avro**: Simpler, better Hadoop/Spark ecosystem support, schema stored in registry\n- **Protobuf**: Better language support, field-number-based (no name coupling), gRPC native\n- **JSON Schema**: Human-readable but verbose, no binary encoding — avoid for high-throughput Kafka",
+      "interviewTip": "Always explain the wire format: magic byte (0x0) + 4-byte schema ID + Avro binary. This shows you understand the actual mechanics, not just the concept. Also mention that 'specific.avro.reader: true' is essential — without it you get GenericRecord objects that require manual field access.",
+      "references": [
+        {
+          "title": "Confluent Schema Registry Documentation",
+          "url": "https://docs.confluent.io/platform/current/schema-registry/index.html"
+        },
+        {
+          "title": "Apache Avro Specification",
+          "url": "https://avro.apache.org/docs/current/specification/"
+        }
+      ],
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "de-dlq-001",
+      "title": "Dead Letter Topics & Retry Patterns in Kafka",
+      "category": "Data Engineering",
+      "subcategory": "Apache Kafka",
+      "difficulty": "medium",
+      "tags": [
+        "kafka",
+        "dead-letter-queue",
+        "retry",
+        "error-handling",
+        "spring-kafka",
+        "backoff"
+      ],
+      "summary": "Why DLQ is essential for resilient pipelines, Spring Kafka @RetryableTopic, exponential backoff retry topics, and DLQ reprocessing strategies.",
+      "content": "## Dead Letter Topics & Retry Patterns\n\n### Why Dead Letter Topics Are Essential\nIn Kafka, if a consumer throws an exception, it blocks the partition — that partition's messages pile up until the error is resolved. Without a DLQ strategy, one bad message can halt an entire partition indefinitely.\n\n**Failure causes:**\n- Downstream service (DB, API) temporarily unavailable → transient, should retry\n- Malformed message / deserialization error → permanent, should DLQ immediately\n- Business rule violation → permanent, needs human review\n\n### Spring Kafka @RetryableTopic\nSpring Kafka 2.7+ provides first-class retry topic infrastructure:\n\n```java\n@Component\npublic class PaymentConsumer {\n\n    @RetryableTopic(\n        attempts = \"4\",                    // 1 original + 3 retries\n        backoff = @Backoff(\n            delay = 1000,                  // 1 second initial delay\n            multiplier = 2.0,              // Exponential: 1s, 2s, 4s\n            maxDelay = 30000               // Cap at 30 seconds\n        ),\n        exclude = {DeserializationException.class},  // Skip retry for poison pills\n        dltTopicSuffix = \"-dlt\",\n        topicSuffixingStrategy = TopicSuffixingStrategy.SUFFIX_WITH_INDEX_VALUE\n    )\n    @KafkaListener(topics = \"payments\")\n    public void processPayment(PaymentEvent event) {\n        paymentService.process(event);\n    }\n\n    @DltHandler\n    public void handleDlt(PaymentEvent event,\n                          @Header(KafkaHeaders.RECEIVED_TOPIC) String topic,\n                          @Header(KafkaHeaders.EXCEPTION_MESSAGE) String errorMsg) {\n        log.error(\"DLT received from topic={} error={}\", topic, errorMsg);\n        dlqRepository.save(new DlqRecord(event, topic, errorMsg));\n        alertingService.sendAlert(\"Payment DLQ entry: \" + event.getPaymentId());\n    }\n}\n```\n\n**Auto-created retry topics:**\n```\npayments\npayments-retry-0   (delay: 1s)\npayments-retry-1   (delay: 2s)\npayments-retry-2   (delay: 4s)\npayments-dlt       (dead letter — no more retries)\n```\n\n### Fixed Delay vs Exponential Backoff\n\n| Strategy | Config | Use Case |\n| :--- | :--- | :--- |\n| **Fixed Delay** | `delay=5000, multiplier=1` | Simple, predictable retry cadence |\n| **Exponential Backoff** | `delay=1000, multiplier=2` | Gradual back-off to reduce downstream pressure |\n| **Exponential + Jitter** | Add random jitter to delays | Prevent retry storms from synchronized consumers |\n\n### Poison Pill Detection\nA **poison pill** is a message that will *always* fail — malformed bytes, incompatible schema, null required field. Retrying endlessly wastes resources.\n\n```java\n@Bean\npublic DefaultErrorHandler errorHandler(KafkaTemplate<String, Object> template) {\n    DeadLetterPublishingRecoverer recoverer = new DeadLetterPublishingRecoverer(template,\n        (record, ex) -> {\n            if (ex instanceof DeserializationException) {\n                // Permanent failure: go straight to DLT, no retries\n                return new TopicPartition(record.topic() + \"-dlt\", record.partition());\n            }\n            return new TopicPartition(record.topic() + \"-retry\", record.partition());\n        });\n\n    ExponentialBackOffWithMaxRetries backoff = new ExponentialBackOffWithMaxRetries(3);\n    backoff.setInitialInterval(1000L);\n    backoff.setMultiplier(2.0);\n\n    return new DefaultErrorHandler(recoverer, backoff);\n}\n```\n\n### DLQ Monitoring & Manual Reprocessing\n\n```bash\n# Monitor DLQ size (consumer lag on DLT topic)\nkafka-consumer-groups.sh --bootstrap-server broker:9092 \\\n  --group dlt-monitor --describe\n\n# Manual reprocessing: replay DLT back to original topic\nkafka-console-consumer.sh --topic payments-dlt --from-beginning | \\\n  kafka-console-producer.sh --topic payments\n```\n\n**Production DLQ practices:**\n1. Alert when DLT has > 0 messages — treat as a high-priority incident\n2. Store DLT headers: original topic, partition, offset, exception class and message\n3. Build an admin UI to inspect and selectively reprocess DLT records\n4. Implement idempotency on consumers so DLT reprocessing is safe",
+      "interviewTip": "Distinguish transient failures (retryable: downstream timeout, DB connection pool exhaustion) from permanent failures (non-retryable: deserialization error, poison pill). Show you understand that blindly retrying everything wastes resources and can amplify pressure on already-struggling downstream services.",
+      "references": [
+        {
+          "title": "Spring Kafka: Dead Letter Topic Support",
+          "url": "https://docs.spring.io/spring-kafka/docs/current/reference/html/#dead-letters"
+        },
+        {
+          "title": "Spring Kafka @RetryableTopic",
+          "url": "https://docs.spring.io/spring-kafka/docs/current/reference/html/#retryable-topics"
+        }
+      ],
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "de-connect-001",
+      "title": "Kafka Connect & CDC with Debezium",
+      "category": "Data Engineering",
+      "subcategory": "Apache Kafka",
+      "difficulty": "hard",
+      "tags": [
+        "kafka-connect",
+        "debezium",
+        "cdc",
+        "change-data-capture",
+        "outbox-pattern",
+        "smt"
+      ],
+      "summary": "Kafka Connect source and sink connectors, Debezium CDC from database WAL logs, the Outbox Pattern, and Single Message Transforms.",
+      "content": "## Kafka Connect & Change Data Capture with Debezium\n\n### Kafka Connect Architecture\nKafka Connect is a scalable, fault-tolerant framework for streaming data between Kafka and external systems without writing custom producer/consumer code.\n\n```\nExternal System                 Kafka Connect                    Kafka\n\n  MySQL DB    ──► Source Connector (Debezium) ──►  Topic: dbserver.inventory.orders\n  PostgreSQL  ──► Source Connector (Debezium) ──►  Topic: dbserver.public.payments\n\n  Kafka Topic ──► Sink Connector (JDBC)       ──►  PostgreSQL (reporting DB)\n  Kafka Topic ──► Sink Connector (S3)         ──►  AWS S3 (data lake)\n  Kafka Topic ──► Sink Connector (Elasticsearch) ► Elasticsearch (search index)\n```\n\n### Debezium: Change Data Capture from Database WAL\nDebezium reads the database **Write-Ahead Log (WAL)** (called binary log in MySQL, WAL in PostgreSQL) at the database level — not by polling the application tables. This captures every INSERT, UPDATE, DELETE as a structured Kafka event.\n\n**Debezium MySQL Connector Configuration:**\n```json\n{\n  \"name\": \"mysql-orders-connector\",\n  \"config\": {\n    \"connector.class\": \"io.debezium.connector.mysql.MySqlConnector\",\n    \"database.hostname\": \"mysql-host\",\n    \"database.port\": \"3306\",\n    \"database.user\": \"debezium\",\n    \"database.password\": \"${file:/opt/secrets.properties:db.password}\",\n    \"database.server.id\": \"184054\",\n    \"database.server.name\": \"dbserver1\",\n    \"database.include.list\": \"inventory\",\n    \"table.include.list\": \"inventory.orders,inventory.products\",\n    \"database.history.kafka.bootstrap.servers\": \"kafka:9092\",\n    \"database.history.kafka.topic\": \"schema-changes.inventory\",\n    \"transforms\": \"unwrap\",\n    \"transforms.unwrap.type\": \"io.debezium.transforms.ExtractNewRecordState\"\n  }\n}\n```\n\n### Debezium Event Structure\n\n```json\n{\n  \"before\": {\"id\": 101, \"status\": \"PENDING\", \"amount\": 99.99},\n  \"after\":  {\"id\": 101, \"status\": \"PAID\",    \"amount\": 99.99},\n  \"source\": {\n    \"db\": \"inventory\",\n    \"table\": \"orders\",\n    \"ts_ms\": 1698944400000,\n    \"pos\": 12345\n  },\n  \"op\": \"u\",\n  \"ts_ms\": 1698944400500\n}\n```\n\n`op` values: `c` = create, `u` = update, `d` = delete, `r` = read (snapshot)\n\n### The Outbox Pattern with Debezium\nAvoids dual-write inconsistency: instead of writing to DB AND publishing to Kafka (two-phase problem), write only to an **outbox table** in the same DB transaction. Debezium then captures from the outbox table:\n\n```sql\n-- Application writes atomically in ONE DB transaction:\nINSERT INTO orders (id, amount, status) VALUES (101, 99.99, 'PENDING');\nINSERT INTO outbox_events (aggregate_type, aggregate_id, type, payload)\n  VALUES ('Order', 101, 'OrderCreated', '{\"orderId\":101,\"amount\":99.99}');\nCOMMIT;\n-- Debezium picks up outbox_events and publishes to Kafka\n```\n\n### Single Message Transforms (SMT)\nSMTs transform individual records in-flight without writing custom code:\n\n```json\n\"transforms\": \"route,extractKey\",\n\"transforms.route.type\": \"org.apache.kafka.connect.transforms.ReplaceField$Value\",\n\"transforms.extractKey.type\": \"org.apache.kafka.connect.transforms.ExtractField$Key\",\n\"transforms.extractKey.field\": \"order_id\"\n```\n\nCommon SMTs: `ReplaceField`, `MaskField`, `ExtractField`, `InsertField`, `TimestampConverter`, `Filter`\n\n### Managing Connectors via REST API\n\n```bash\n# Deploy connector\ncurl -X POST http://connect:8083/connectors \\\n  -H \"Content-Type: application/json\" \\\n  -d @mysql-connector-config.json\n\n# Check status\ncurl http://connect:8083/connectors/mysql-orders-connector/status\n\n# Restart failed task\ncurl -X POST http://connect:8083/connectors/mysql-orders-connector/tasks/0/restart\n```",
+      "interviewTip": "Explain why CDC via WAL (Debezium) is superior to polling: WAL captures deletes (impossible with pure polling), has zero impact on application query load, captures every intermediate state change, and is transactionally consistent. Also explain the Outbox Pattern as the canonical solution to dual-write problems.",
+      "references": [
+        {
+          "title": "Debezium Documentation",
+          "url": "https://debezium.io/documentation/"
+        },
+        {
+          "title": "Kafka Connect REST API Reference",
+          "url": "https://docs.confluent.io/platform/current/connect/references/restapi.html"
+        }
+      ],
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "de-flink-003",
+      "title": "Apache Flink CEP: Complex Event Pattern Detection",
+      "category": "Data Engineering",
+      "subcategory": "Apache Flink",
+      "difficulty": "expert",
+      "tags": [
+        "flink",
+        "cep",
+        "pattern-detection",
+        "fraud-detection",
+        "side-output"
+      ],
+      "summary": "FlinkCEP Pattern API for complex event detection, contiguity strategies, timeout handling, and a fraud detection example.",
+      "content": "## Apache Flink CEP: Complex Event Pattern Detection\n\n### What Is CEP?\n**Complex Event Processing (CEP)** detects meaningful patterns within a stream of events. Classic use cases: fraud detection, intrusion detection, SLA violation alerting, IoT anomaly detection.\n\nFlinkCEP operates on top of the Flink DataStream API and matches stateful patterns across time.\n\n### Pattern API Building Blocks\n\n```java\n// Fraud pattern: 3+ failed transactions within 10 minutes for same user\nPattern<TransactionEvent, ?> fraudPattern = Pattern\n    .<TransactionEvent>begin(\"firstFail\")\n        .where(new SimpleCondition<TransactionEvent>() {\n            @Override\n            public boolean filter(TransactionEvent event) {\n                return event.getStatus().equals(\"FAILED\");\n            }\n        })\n    .followedBy(\"secondFail\")\n        .where(SimpleCondition.of(e -> e.getStatus().equals(\"FAILED\")))\n    .followedBy(\"thirdFail\")\n        .where(SimpleCondition.of(e -> e.getStatus().equals(\"FAILED\")))\n    .within(Time.minutes(10));  // All 3 must occur within 10 minute window\n```\n\n### Contiguity Strategies\n\n| Method | Contiguity | Description |\n| :--- | :--- | :--- |\n| `next(\"B\")` | STRICT | B must immediately follow A — no events in between |\n| `followedBy(\"B\")` | RELAXED | B follows A, but other events may occur in between |\n| `followedByAny(\"B\")` | NON_DETERMINISTIC | Every B after A is matched, even if multiple |\n\n**STRICT** is strictest — use for sequence protocols. **RELAXED** is most common for real-world fraud patterns where other legitimate events may interleave.\n\n### Applying Pattern to Stream\n\n```java\nDataStream<TransactionEvent> transactions = env\n    .addSource(kafkaSource)\n    .keyBy(TransactionEvent::getUserId);  // Match patterns per-user\n\nPatternStream<TransactionEvent> patternStream =\n    CEP.pattern(transactions, fraudPattern);\n\n// Side output for timeout (user had only 2 failures — not a match)\nOutputTag<Tuple2<String, List<TransactionEvent>>> timeoutTag =\n    new OutputTag<>(\"pattern-timeout\"){};\n\nSingleOutputStreamOperator<FraudAlert> alerts = patternStream\n    .flatSelect(\n        timeoutTag,\n        // Timeout handler\n        (Map<String, List<TransactionEvent>> pattern, Long timestamp,\n         Collector<Tuple2<String, List<TransactionEvent>>> out) -> {\n            out.collect(Tuple2.of(\"TIMEOUT\", pattern.get(\"firstFail\")));\n        },\n        // Match handler\n        (Map<String, List<TransactionEvent>> pattern,\n         Collector<FraudAlert> out) -> {\n            List<TransactionEvent> failures = new ArrayList<>();\n            failures.addAll(pattern.get(\"firstFail\"));\n            failures.addAll(pattern.get(\"secondFail\"));\n            failures.addAll(pattern.get(\"thirdFail\"));\n            out.collect(new FraudAlert(failures.get(0).getUserId(), failures));\n        }\n    );\n\n// Partial matches that timed out\nDataStream<Tuple2<String, List<TransactionEvent>>> timeouts =\n    alerts.getSideOutput(timeoutTag);\n```\n\n### Advanced Pattern Features\n\n```java\n// Quantifiers — match one or more consecutive failures\nPattern.<TransactionEvent>begin(\"failures\")\n    .where(SimpleCondition.of(e -> e.getStatus().equals(\"FAILED\")))\n    .times(3)              // exactly 3\n    // .timesOrMore(3)     // 3 or more\n    // .oneOrMore()        // 1 or more (greedy by default)\n    .within(Time.minutes(10));\n\n// Loop conditions — each event in a sequence checked against previous\nPattern.<TransactionEvent>begin(\"escalating\")\n    .where(SimpleCondition.of(e -> e.getAmount() > 100))\n    .followedBy(\"larger\")\n    .where((event, ctx) -> {\n        // Access previously matched events!\n        double prevAmount = ctx.getEventsForPattern(\"escalating\")\n            .iterator().next().getAmount();\n        return event.getAmount() > prevAmount * 1.5;  // 50% larger\n    });\n```\n\n### SKIP Strategy\nWhen a pattern matches, how far to advance before looking for the next match:\n- `NO_SKIP`: Every possible match returned (including overlapping)\n- `SKIP_TO_NEXT`: Skip past the first event of the current match\n- `SKIP_PAST_LAST_EVENT`: Skip past entire matched sequence (no overlapping)\n\n```java\nAfterMatchSkipStrategy skipStrategy = AfterMatchSkipStrategy.skipPastLastEvent();\nPattern<TransactionEvent, ?> pattern = Pattern\n    .<TransactionEvent>begin(\"start\", skipStrategy)\n    ...;\n```",
+      "interviewTip": "Lead with a concrete use case (fraud: 3 failed transactions in 10 minutes). Then explain the difference between STRICT (next) vs RELAXED (followedBy) contiguity — most real-world patterns need RELAXED because legitimate events interleave between anomalous ones. Mention timeout handling via side outputs for partial matches.",
+      "references": [
+        {
+          "title": "Apache Flink CEP Documentation",
+          "url": "https://nightlies.apache.org/flink/flink-docs-stable/docs/libs/cep/"
+        }
+      ],
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "de-flink-004",
+      "title": "Flink SQL & Table API: Streaming Queries & Windowed Aggregations",
+      "category": "Data Engineering",
+      "subcategory": "Apache Flink",
+      "difficulty": "hard",
+      "tags": [
+        "flink",
+        "flink-sql",
+        "table-api",
+        "windowing",
+        "streaming-sql",
+        "match-recognize"
+      ],
+      "summary": "Flink SQL DDL for Kafka connectors, tumbling window aggregations, MATCH_RECOGNIZE for CEP in SQL, temporal joins, and when to use DataStream API.",
+      "content": "## Flink SQL & Table API\n\n### Why Flink SQL?\nFlink SQL brings the familiar SQL interface to streaming data. It compiles to the same optimized DataStream API underneath but dramatically reduces boilerplate and enables non-Java teams to write streaming queries.\n\n### Defining a Kafka Source Table\n\n```sql\nCREATE TABLE transactions (\n    transaction_id  STRING,\n    user_id         STRING,\n    amount          DOUBLE,\n    status          STRING,\n    event_time      TIMESTAMP(3),\n    WATERMARK FOR event_time AS event_time - INTERVAL '10' SECOND\n) WITH (\n    'connector' = 'kafka',\n    'topic'     = 'payments',\n    'properties.bootstrap.servers' = 'kafka:9092',\n    'properties.group.id'  = 'flink-sql-consumer',\n    'format'    = 'avro-confluent',\n    'avro-confluent.schema-registry.url' = 'http://schema-registry:8081',\n    'scan.startup.mode' = 'earliest-offset'\n);\n\n-- Kafka Sink Table\nCREATE TABLE fraud_alerts (\n    user_id     STRING,\n    alert_time  TIMESTAMP(3),\n    fail_count  BIGINT\n) WITH (\n    'connector' = 'kafka',\n    'topic'     = 'fraud-alerts',\n    'format'    = 'json'\n);\n```\n\n### Tumbling Window Aggregation\n\n```sql\n-- Count failures per user per 5-minute tumbling window\nINSERT INTO fraud_alerts\nSELECT\n    user_id,\n    TUMBLE_END(event_time, INTERVAL '5' MINUTE) AS alert_time,\n    COUNT(*) AS fail_count\nFROM transactions\nWHERE status = 'FAILED'\nGROUP BY\n    user_id,\n    TUMBLE(event_time, INTERVAL '5' MINUTE)\nHAVING COUNT(*) >= 3;\n```\n\n### Window Types in Flink SQL\n\n| Window | SQL Function | Description |\n| :--- | :--- | :--- |\n| Tumbling | `TUMBLE(time_col, INTERVAL)` | Fixed-size, non-overlapping windows |\n| Sliding (Hop) | `HOP(time_col, slide, size)` | Overlapping windows, events appear in multiple windows |\n| Session | `SESSION(time_col, gap)` | Dynamic gap-based windows, closes after inactivity |\n| Cumulative | `CUMULATE(time_col, step, max)` | Growing windows that reset at max size |\n\n### MATCH_RECOGNIZE: CEP in SQL\n\n```sql\n-- Detect: login succeeded followed by 3+ failed transactions within 10 minutes\nSELECT *\nFROM transactions\nMATCH_RECOGNIZE (\n    PARTITION BY user_id\n    ORDER BY event_time\n    MEASURES\n        FIRST(FAIL.event_time) AS first_fail_time,\n        LAST(FAIL.event_time)  AS last_fail_time,\n        COUNT(FAIL.*)          AS fail_count\n    ONE ROW PER MATCH\n    AFTER MATCH SKIP PAST LAST ROW\n    PATTERN (FAIL{3,} ) WITHIN INTERVAL '10' MINUTE\n    DEFINE\n        FAIL AS status = 'FAILED'\n);\n```\n\n### Temporal Join: Lookup Table (Slowly Changing Dimension)\n\n```sql\n-- Join each transaction with the exchange rate valid at event time\nCREATE TABLE exchange_rates (\n    currency    STRING,\n    rate        DOUBLE,\n    valid_time  TIMESTAMP(3),\n    PRIMARY KEY (currency) NOT ENFORCED\n) WITH (\n    'connector' = 'jdbc',\n    'url' = 'jdbc:postgresql://db/rates',\n    'table-name' = 'exchange_rates',\n    'lookup.cache.max-rows' = '1000',\n    'lookup.cache.ttl' = '60s'\n);\n\nSELECT\n    t.transaction_id,\n    t.amount * r.rate AS amount_usd\nFROM transactions t\nJOIN exchange_rates FOR SYSTEM_TIME AS OF t.event_time AS r\n    ON t.currency = r.currency;\n```\n\n### Table API (Java/Scala)\n\n```java\nStreamTableEnvironment tEnv = StreamTableEnvironment.create(env);\n\nTable transactions = tEnv.from(\"transactions\");\n\nTable failureCounts = transactions\n    .filter($\"status\".isEqual(\"FAILED\"))\n    .window(Tumble.over(lit(5).minutes()).on($\"event_time\").as(\"w\"))\n    .groupBy($\"user_id\", $\"w\")\n    .select($\"user_id\", $\"w\".end().as(\"window_end\"), $\"status\".count().as(\"fail_count\"))\n    .filter($\"fail_count\".isGreaterOrEqual(3));\n\n// Convert back to DataStream for CEP or custom sinks\nDataStream<Row> resultStream = tEnv.toDataStream(failureCounts);\n```\n\n### Flink SQL vs Table API vs DataStream API\n\n| Layer | Best For |\n| :--- | :--- |\n| **Flink SQL** | Ad-hoc queries, analytics teams, simple ETL pipelines |\n| **Table API** | Programmatic query building with type safety in Java/Python |\n| **DataStream API** | Custom operators, CEP, async I/O, full control over state |\n\nFlink SQL and Table API compile to the same Blink planner underneath — choose based on team familiarity.",
+      "interviewTip": "When asked about Flink SQL vs DataStream, explain that SQL is a higher abstraction that compiles to DataStream internally. Use SQL for standard aggregations and joins; drop to DataStream for custom state management, CEP, async I/O, or when you need ProcessFunction-level control. Mention MATCH_RECOGNIZE as the SQL equivalent of FlinkCEP.",
+      "references": [
+        {
+          "title": "Flink SQL Documentation",
+          "url": "https://nightlies.apache.org/flink/flink-docs-stable/docs/dev/table/overview/"
+        },
+        {
+          "title": "Flink SQL Windowing",
+          "url": "https://nightlies.apache.org/flink/flink-docs-stable/docs/dev/table/sql/queries/window-agg/"
+        }
+      ],
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "de-flink-005",
+      "title": "Flink Backpressure, Parallelism & Performance Tuning",
+      "category": "Data Engineering",
+      "subcategory": "Apache Flink",
+      "difficulty": "expert",
+      "tags": [
+        "flink",
+        "backpressure",
+        "parallelism",
+        "performance",
+        "async-io",
+        "key-skew"
+      ],
+      "summary": "Credit-based flow control, detecting and resolving backpressure, parallelism tuning, async I/O, state TTL, and key skew detection.",
+      "content": "## Flink Backpressure, Parallelism & Performance Tuning\n\n### Credit-Based Flow Control (Network Backpressure)\nFlink uses a **credit-based** mechanism at the network layer between TaskManagers:\n\n```\nUpstream Operator           Network Buffer           Downstream Operator\n     │                                                     │\n     │  ◄── Credits (\"I can accept N buffers\") ──────────  │\n     │                                                     │\n     │  ──── Data (consumes credit) ────────────────────►  │\n     │                                                     │\n     │  (If downstream overwhelmed, credits = 0 → upstream │\n     │   stops emitting → backpressure propagates up)      │\n```\n\nBackpressure propagates **upstream** through the pipeline naturally — no explicit signaling needed. Source operators slow down (e.g., Kafka consumer stops polling) when downstream is saturated.\n\n### Detecting Backpressure via Flink UI\n\n1. Open Flink Dashboard → Job → Operator graph\n2. Each operator shows **Backpressure Status**:\n   - `OK` (green): < 10% time blocked\n   - `LOW` (yellow): 10–50% time blocked\n   - `HIGH` (red): > 50% time blocked\n3. The **bottleneck operator** is the one showing HIGH backpressure with an upstream OK neighbor.\n\n**Key metrics:**\n```\ntaskmanager.job.task.isBackPressured          # Boolean flag\ntaskmanager.job.task.backPressuredTimeMsPerSecond  # Milliseconds per second blocked\ntaskmanager.job.task.busyTimeMsPerSecond      # Busy time (complement of idle)\n```\n\n### Root Causes & Fixes\n\n#### 1. Insufficient Parallelism\n```java\n// Set per-operator parallelism\nstream\n    .keyBy(Event::getUserId)\n    .process(new ExpensiveProcessor())\n    .setParallelism(16)   // Scale up bottleneck operator\n    .sinkTo(kafkaSink)\n    .setParallelism(8);\n\n// Global default parallelism\nenv.setParallelism(8);\n```\n\n#### 2. Slow State Access (RocksDB)\nRocksDB reads involve deserialization. Optimize:\n```yaml\n# flink-conf.yaml\nstate.backend: rocksdb\nstate.backend.rocksdb.block.cache-size: 256mb  # Increase block cache\nstate.backend.rocksdb.writebuffer.size: 64mb\nstate.backend.rocksdb.writebuffer.count: 3\n# Use bloom filters to reduce unnecessary disk reads\nstate.backend.rocksdb.bloom-filter.enabled: true\n```\n\n#### 3. Async I/O for External Lookups\nBlocking synchronous external calls (DB, REST API) inside operators kills throughput. Use **AsyncFunction**:\n\n```java\npublic class AsyncEnrichmentFunction\n    extends RichAsyncFunction<Transaction, EnrichedTransaction> {\n\n    private AsyncHttpClient httpClient;\n\n    @Override\n    public void open(Configuration parameters) {\n        httpClient = Dsl.asyncHttpClient();\n    }\n\n    @Override\n    public void asyncInvoke(Transaction tx,\n                            ResultFuture<EnrichedTransaction> resultFuture) {\n        // Non-blocking HTTP call — thousands can be in-flight simultaneously\n        httpClient.prepareGet(\"http://user-service/\" + tx.getUserId())\n            .execute(new AsyncCompletionHandler<Response>() {\n                @Override\n                public Response onCompleted(Response response) {\n                    UserInfo user = parseResponse(response);\n                    resultFuture.complete(Collections.singleton(\n                        new EnrichedTransaction(tx, user)\n                    ));\n                    return response;\n                }\n            });\n    }\n}\n\n// Apply with capacity limit (max in-flight requests)\nDataStream<EnrichedTransaction> enriched = AsyncDataStream\n    .unorderedWait(transactions, new AsyncEnrichmentFunction(),\n        5, TimeUnit.SECONDS,   // timeout per request\n        1000);                 // max concurrent requests\n```\n\n#### 4. State TTL to Control Size\n```java\nStateTtlConfig ttlConfig = StateTtlConfig\n    .newBuilder(Time.hours(2))  // Expire state after 2 hours of inactivity\n    .setUpdateType(StateTtlConfig.UpdateType.OnReadAndWrite)\n    .setStateVisibility(StateTtlConfig.StateVisibility.NeverReturnExpired)\n    .cleanupInRocksdbCompactFilter(1000)  // Check every 1000 state accesses\n    .build();\n```\n\n### Key Skew Detection & Resolution\nKey skew occurs when certain keys receive disproportionately more data (e.g., a single popular user ID).\n\n```java\n// Detect: check TaskManager CPU/memory in Flink UI — skewed keys land on same slot\n// Resolution 1: Salt the key (pre-aggregation)\nstream\n    .map(e -> Tuple2.of(e.getUserId() + \"_\" + (e.hashCode() % 8), e))\n    .keyBy(t -> t.f0)\n    .process(new SaltedPartialAggregator())  // Aggregate per salt bucket\n    .keyBy(partial -> partial.userId)        // Re-key to merge\n    .process(new MergeAggregator());         // Final merge\n\n// Resolution 2: Use broadcast state for hot keys\n// Resolution 3: Filter hot keys to a separate high-parallelism pipeline\n```\n\n### Checkpoint Tuning for High Throughput\n```yaml\nexecution.checkpointing.interval: 60000        # Checkpoint every 60s\nexecution.checkpointing.timeout: 120000        # Fail if checkpoint > 2min\nexecution.checkpointing.mode: EXACTLY_ONCE\nexecution.checkpointing.unaligned: true        # Unaligned checkpoints for high backpressure\ntaskmanager.network.memory.fraction: 0.15      # More memory for network buffers\n```",
+      "interviewTip": "When asked about performance issues, follow this diagnostic flow: (1) Check Flink UI for backpressure status to identify bottleneck operator, (2) Check if it's CPU-bound (parallelism), I/O-bound (async I/O or state backend tuning), or data-skew-bound (key distribution), then apply targeted fix. Jumping straight to 'increase parallelism' without diagnosis is a red flag.",
+      "references": [
+        {
+          "title": "Flink Performance Tuning Guide",
+          "url": "https://nightlies.apache.org/flink/flink-docs-stable/docs/ops/production_ready/"
+        },
+        {
+          "title": "Flink Async I/O Documentation",
+          "url": "https://nightlies.apache.org/flink/flink-docs-stable/docs/dev/datastream/operators/asyncio/"
+        }
+      ],
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "de-spark-001",
+      "title": "Spark vs Flink: Architecture & When to Use What",
+      "category": "Data Engineering",
+      "subcategory": "Stream Processing Patterns",
+      "difficulty": "hard",
+      "tags": [
+        "spark",
+        "flink",
+        "comparison",
+        "structured-streaming",
+        "micro-batch",
+        "architecture"
+      ],
+      "summary": "Architectural differences between Spark (micro-batch) and Flink (true streaming), Catalyst optimizer, and decision framework for choosing each.",
+      "content": "## Spark vs Flink: Architecture & When to Use Each\n\n### Core Architectural Difference\n\n```\nApache Spark Structured Streaming:\n\nInfinite Stream ──► [Micro-batch at interval T] ──► Spark SQL Engine ──► Output\n                         │\n                    Treats each micro-batch as a small batch DataFrame query\n                    Latency: seconds (trigger interval)\n                    Processing: batch-optimized Catalyst + Tungsten\n\nApache Flink:\n\nInfinite Stream ──► [Record-by-Record / Mini-batch] ──► Streaming Engine ──► Output\n                         │\n                    True streaming — processes each event as it arrives\n                    Latency: milliseconds\n                    State: local RocksDB, incrementally checkpointed\n```\n\n### Spark Architecture\n\n| Component | Description |\n| :--- | :--- |\n| **Catalyst Optimizer** | SQL query plan optimizer — rule-based + cost-based — produces optimized physical plan |\n| **Tungsten Engine** | Off-heap binary memory format + LLVM-style code generation for CPU efficiency |\n| **Structured Streaming** | Micro-batch streaming built on DataFrame API — same code for batch & stream |\n| **MLlib** | Distributed ML library — Ridge/Lasso, GBT, k-means, ALS — mature ecosystem |\n| **Delta Lake** | ACID transactions on data lake — time travel, schema enforcement |\n\n### Flink Architecture\n\n| Component | Description |\n| :--- | :--- |\n| **JobManager** | Master node — schedules tasks, coordinates checkpoints, manages recovery |\n| **TaskManager** | Worker node — executes operator subtasks in slots |\n| **State Backends** | HashMapStateBackend (in-memory) or RocksDB (disk-based, TB-scale) |\n| **Event Time** | Native watermark-based event time semantics — deterministic replays |\n| **CEP Library** | Complex Event Processing — pattern detection across event streams |\n\n### Side-by-Side Comparison\n\n| Dimension | Apache Spark | Apache Flink |\n| :--- | :--- | :--- |\n| **Processing Model** | Micro-batch (Structured Streaming) | True event-by-event streaming |\n| **Latency** | Seconds (100ms minimum with trigger Once) | Milliseconds |\n| **State Management** | Limited (stateful ops via mapGroupsWithState) | First-class (rich keyed state, TTL, RocksDB) |\n| **Exactly-Once** | Yes (via WAL + idempotent sinks) | Yes (via checkpointing + transactional sinks) |\n| **Batch Processing** | Mature, best-in-class (Catalyst + Tungsten) | Supported but less mature than Spark |\n| **ML Ecosystem** | MLlib — extensive, production-ready | FlinkML — limited; usually delegate to Spark |\n| **SQL Support** | Spark SQL — very mature, wide adoption | Flink SQL — strong but less ecosystem tools |\n| **CEP** | Not native (need external libs) | Native FlinkCEP library |\n| **Backpressure** | Manual trigger management | Automatic credit-based flow control |\n| **Operational Complexity** | Lower (familiar SQL, Python API) | Higher (state backend tuning, watermarks) |\n\n### Decision Framework\n\n```\n                    Is latency requirement < 1 second?\n                           │\n              ┌────────────┴────────────┐\n             YES                       NO\n              │                         │\n           USE FLINK                Do you need ML at scale?\n              │                         │\n         Also use Flink if:      ┌──────┴──────┐\n         - CEP pattern detection  YES          NO\n         - Complex stateful ops   │            │\n         - True event-time        MLlib     Spark Structured\n           semantics needed      (Spark)     Streaming or\n                                            Spark Batch\n```\n\n### Common Use Cases\n\n**Spark wins:**\n- Large-scale batch ETL jobs (petabyte-scale historical processing)\n- Machine learning training pipelines\n- Interactive SQL analytics (Spark SQL + Databricks)\n- Teams already invested in PySpark/Scala Spark\n- Delta Lake / Lakehouse architecture\n\n**Flink wins:**\n- Real-time fraud detection (millisecond response required)\n- Real-time dashboards and alerting\n- Complex event pattern matching (CEP)\n- High-volume event enrichment with external lookups\n- Applications requiring true event-time semantics and deterministic reprocessing\n\n### Unified Architecture: Flink for Streaming, Spark for Batch\n\n```\nKafka ──► Flink (real-time features, alerts, serving) ──► Redis/DB\n  │\n  └──► S3 / Delta Lake ──► Spark (batch ML training, BI reports) ──► Model Store / BI\n```\n\nMany production architectures use **both**: Flink handles the real-time serving path, Spark handles the batch/ML path. They share the same data lake (S3 + Delta/Iceberg) as the integration layer.",
+      "interviewTip": "Don't position Spark and Flink as competitors — they complement each other. Show you understand that Spark's micro-batch model is a deliberate design choice that enables Catalyst query optimization and simplicity, while Flink's true streaming enables millisecond latency at the cost of more operational complexity. Mention that most large companies use both.",
+      "references": [
+        {
+          "title": "Flink vs Spark: Streaming Data Comparison",
+          "url": "https://flink.apache.org/2019/02/21/apache-flink-and-apache-spark-a-comparison/"
+        },
+        {
+          "title": "Databricks: Structured Streaming Documentation",
+          "url": "https://spark.apache.org/docs/latest/structured-streaming-programming-guide.html"
+        }
+      ],
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "de-pipeline-001",
+      "title": "Data Pipeline Design: Lambda vs Kappa Architecture",
+      "category": "Data Engineering",
+      "subcategory": "Stream Processing Patterns",
+      "difficulty": "hard",
+      "tags": [
+        "lambda-architecture",
+        "kappa-architecture",
+        "pipeline-design",
+        "batch-layer",
+        "speed-layer",
+        "log-centric"
+      ],
+      "summary": "Lambda architecture trade-offs (batch + speed + serving layers) vs Kappa's streaming-only approach, and when each is justified.",
+      "content": "## Lambda vs Kappa Architecture\n\n### Lambda Architecture (Nathan Marz, 2011)\nDesigned to handle massive data by splitting computation across two paths:\n\n```\n                    ┌─────────────────────────────────────────┐\nData Source ────────►   Batch Layer (Spark on HDFS/S3)        │\n    │               │   - Reprocesses ALL historical data      │\n    │               │   - High latency (hours), high accuracy  │\n    │               │   - Generates batch views                │\n    │               └──────────────┬──────────────────────────┘\n    │                              │ Batch views\n    │               ┌──────────────▼──────────────────────────┐\n    └──────────────►│  Speed Layer (Flink/Kafka Streams)       │\n                    │   - Processes ONLY recent data           │\n                    │   - Low latency (ms-seconds)             │\n                    │   - Generates real-time views            │\n                    └──────────────┬──────────────────────────┘\n                                   │ Real-time views\n                    ┌──────────────▼──────────────────────────┐\n                    │  Serving Layer (Cassandra, Redis, HBase) │\n                    │   - Merges batch + real-time views        │\n                    │   - Answers queries                      │\n                    └─────────────────────────────────────────┘\n```\n\n### Lambda Architecture: Layers Explained\n\n**Batch Layer:**\n- Stores the complete, immutable master dataset (all historical events)\n- Periodically reprocesses everything from scratch to generate accurate batch views\n- Technology: Spark on S3/HDFS, Hive, Presto\n- Latency: Hours to days\n\n**Speed Layer:**\n- Processes only the most recent data not yet in batch views\n- Provides low-latency approximate results\n- Technology: Flink, Kafka Streams, Storm\n- Latency: Milliseconds to seconds\n\n**Serving Layer:**\n- Merges batch views + real-time views to answer queries\n- Technology: Apache Druid, Cassandra, Redis, HBase\n\n### Lambda Architecture Problems\n\n1. **Two codebases**: Batch logic in Spark SQL must be replicated in Flink/Kafka Streams. Schema changes, bug fixes, and new features must be implemented twice — divergence is inevitable.\n2. **Operational complexity**: Two completely different technology stacks to deploy, monitor, and tune.\n3. **Serving layer merge logic**: Complex query-time merging of batch and real-time views.\n4. **Reprocessing friction**: Historical reprocessing in Spark cannot be hot-swapped with the real-time path.\n\n### Kappa Architecture (Jay Kreps, 2014)\nSimplification: **everything is a stream**. Eliminate the batch layer entirely.\n\n```\n                    ┌──────────────────────────────────────────────┐\nData Source ───────► Kafka (Immutable, Long-Retention Event Log)    │\n                    │  Retention: 90 days or unlimited (tiered)    │\n                    └───────────────────┬──────────────────────────┘\n                                        │\n                    ┌───────────────────▼──────────────────────────┐\n                    │  Stream Processor (Flink / Kafka Streams)    │\n                    │   - Real-time processing for serving          │\n                    │   - Reprocessing: deploy new version,         │\n                    │     replay from beginning of Kafka log         │\n                    └───────────────────┬──────────────────────────┘\n                                        │\n                    ┌───────────────────▼──────────────────────────┐\n                    │  Serving Layer (Redis, Cassandra, Postgres)   │\n                    └──────────────────────────────────────────────┘\n```\n\n### Kappa: Reprocessing Strategy\nThe key insight: Kafka's immutable log IS the batch layer. To reprocess:\n1. Deploy new version of the Flink job with a **new consumer group** (and new output topic)\n2. Set `auto.offset.reset=earliest` — consume from beginning of Kafka log\n3. Once new job catches up to current time, switch serving layer to new output\n4. Decommission old job\n\n```bash\n# Flink Kappa reprocessing: replay from beginning\nflink run \\\n  -p 16 \\\n  -c com.example.PaymentAggregatorV2 \\\n  payment-aggregator-2.jar \\\n  --kafka.group.id=payment-aggregator-v2 \\\n  --kafka.auto.offset.reset=earliest \\\n  --output.topic=payment-aggregations-v2\n```\n\n### Lambda vs Kappa Decision Framework\n\n| Factor | Lambda | Kappa |\n| :--- | :--- | :--- |\n| **Team Size** | Large teams, separate batch/streaming expertise | Smaller teams, single streaming codebase |\n| **Latency** | Mixed: batch = hours, speed = ms | Uniformly low (ms to seconds) |\n| **Reprocessing** | Spark batch job — mature, fast | Kafka replay — requires long retention |\n| **ML Training** | Natural (batch layer = training data) | Possible but awkward (stream to S3 first) |\n| **Data Volume** | Handles petabytes in batch efficiently | Kafka retention cost for very old data |\n| **Correctness** | Batch layer always corrects speed layer errors | One pipeline = one place to fix bugs |\n\n### When Lambda Is Still Justified\n1. **ML training requires batch access**: Training models on 2 years of historical data — Spark batch on S3 is more efficient than Kafka replay.\n2. **Regulatory reprocessing**: Compliance requires reprocessing 5+ years of data — Kafka long-term retention is expensive.\n3. **Complex batch-only computations**: Graph algorithms, iterative ML — don't fit the streaming model.\n4. **Legacy constraints**: Existing Spark infrastructure that's expensive to migrate.\n\n### Log-Centric Architecture Principle\nBoth Lambda and Kappa share the same foundation: treat the **event log as the source of truth**. Databases, caches, and serving layers are just **materialized views** of the log that can be rebuilt at any time.\n\n```\nKafka (Source of Truth)\n    │\n    ├──► Flink ──► Redis (Real-time serving cache)\n    ├──► Flink ──► PostgreSQL (OLTP materialized view)\n    ├──► Kafka Connect S3 Sink ──► S3 / Delta Lake (Analytics)\n    └──► Elasticsearch Connector ──► Elasticsearch (Search index)\n```\n\nThis mindset enables fearless migrations: if a serving store becomes corrupted or needs schema changes, you rebuild it from the Kafka log rather than attempting complex migrations.",
+      "interviewTip": "Show architectural maturity by pointing out Lambda's biggest failure mode: the two-codebase problem. Business logic implemented differently in Spark and Flink will diverge over time — this is not a discipline problem, it's an architectural inevitability. Kappa's single-codebase approach eliminates this entire class of bugs. Then explain when Lambda is still justified (ML training on years of data, petabyte-scale batch with mature Spark infrastructure).",
+      "references": [
+        {
+          "title": "Jay Kreps: Questioning the Lambda Architecture",
+          "url": "https://www.oreilly.com/radar/questioning-the-lambda-architecture/"
+        },
+        {
+          "title": "Martin Kleppmann: Designing Data-Intensive Applications",
+          "url": "https://dataintensive.net/"
+        }
+      ],
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    }
+  ]
+}
