@@ -40,7 +40,6 @@ function App() {
     setViewMode,
   } = useKnowledgeBase();
 
-  // Keyboard shortcut: Pressing '/' focuses search (unless already in input or modal open)
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (e.key === '/' && document.activeElement?.tagName !== 'INPUT' && !selectedTopic) {
@@ -53,7 +52,6 @@ function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [selectedTopic]);
 
-  // Modal topic navigation
   const currentIndex = selectedTopic
     ? filteredTopics.findIndex(t => t.id === selectedTopic.id)
     : -1;
@@ -66,8 +64,7 @@ function App() {
   }, [currentIndex, filteredTopics, setSelectedTopic]);
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-100 transition-colors duration-200 selection:bg-indigo-500 selection:text-white">
-      {/* Top Header */}
+    <div className="min-h-screen bg-slate-50 dark:bg-[#060a06] text-slate-800 dark:text-[#b4ffb4] transition-colors duration-200 selection:bg-[#00ff41] selection:text-black dark:selection:bg-[#00ff41] dark:selection:text-black">
       <Header
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
@@ -75,10 +72,11 @@ function App() {
         sidebarOpen={sidebarOpen}
         theme={theme}
         onToggleTheme={toggleTheme}
+        allTopics={allTopics}
+        onTopicSelect={setSelectedTopic}
       />
 
       <div className="flex max-w-[1600px] mx-auto">
-        {/* Category Navigation Sidebar */}
         <Sidebar
           activeCategory={activeCategory}
           onCategoryChange={setActiveCategory}
@@ -87,12 +85,9 @@ function App() {
           onClose={() => setSidebarOpen(false)}
         />
 
-        {/* Main Content Area */}
         <main className="flex-1 min-w-0 p-4 sm:p-6 lg:p-8">
-          {/* Progress & Health Bar */}
           <StatsBar allTopics={allTopics} />
 
-          {/* Filtering & View Mode Controls */}
           <div className="mb-8">
             <FilterBar
               activeCategory={activeCategory}
@@ -114,7 +109,6 @@ function App() {
             />
           </div>
 
-          {/* Hierarchical Grouped Cards View (Frontend -> React, Angular, etc.) */}
           <CardGrid
             topics={filteredTopics}
             hierarchicalTopics={hierarchicalTopics}
@@ -125,7 +119,6 @@ function App() {
         </main>
       </div>
 
-      {/* Detail Modal Dialog */}
       {selectedTopic && (
         <DetailModal
           topic={selectedTopic}

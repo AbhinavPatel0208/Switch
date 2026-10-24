@@ -6,7 +6,8 @@
     "Java Core & Concurrency",
     "JVM & Memory Architecture",
     "Spring Boot Internals",
-    "Spring Security & OAuth2"
+    "Spring Security & OAuth2",
+    "Spring Data & Testing"
   ],
   "topics": [
     {
@@ -15,22 +16,11 @@
       "category": "Java & Spring Boot",
       "subcategory": "Java Core & Concurrency",
       "difficulty": "hard",
-      "tags": [
-        "java",
-        "hashmap",
-        "concurrency",
-        "treeification",
-        "red-black-tree"
-      ],
+      "tags": ["java", "hashmap", "concurrency", "treeification", "red-black-tree"],
       "summary": "Deep dive into HashMap hashing, bucket index calculation, collision handling with Red-Black trees, and ConcurrentHashMap lock striping.",
-      "content": "## HashMap Internals & Memory Architecture\n\n### Bucket Array & Hash Calculation\nHashMap uses an array of `Node<K,V>` buckets with default initial capacity `16` and load factor `0.75`.\n\n```java\n// 1. Bit-shift hash calculation to spread high bits to low bits:\nstatic final int hash(Object key) {\n    int h;\n    return (key == null) ? 0 : (h = key.hashCode()) ^ (h >>> 16);\n}\n\n// 2. Fast modulo via bitwise AND (Capacity must always be a power of 2!):\nint index = (n - 1) & hash;\n```\n\n### Java 8 Treeification Mechanism\nIn Java 7, collisions formed a linked list with $O(n)$ search time. Java 8 converts a bucket to a **Red-Black Tree** ($O(\\log n)$ search) when:\n1. The bucket length reaches **`TREEIFY_THRESHOLD = 8`**.\n2. Total table capacity is at least **`MIN_TREEIFY_CAPACITY = 64`** (otherwise, it simply resizes the array).\n3. If elements decrease to **`UNTREEIFY_THRESHOLD = 6`**, it converts back to a linked list.\n\n```\nBucket Collision Progression:\nLinked List (< 8 elements)      Red-Black Tree (>= 8 elements)\n[Head] ──► [Node] ──► [Node]       ┌───[Root]───┐\n                                  /              \\\n                            [Left Child]    [Right Child]\n```\n\n### Why ConcurrentHashMap Replaces Hashtable\n- **Hashtable / Collections.synchronizedMap**: Locks the **entire map** for every operation using a single monitor lock. All threads queue up.\n- **ConcurrentHashMap (Java 8+)**: Uses fine-grained **Node-level locking (`synchronized` on the bucket head node)** and CAS (Compare-And-Swap) for empty bucket insertions. Different threads write to different buckets simultaneously with zero blocking!",
-      "references": [
-        {
-          "title": "OpenJDK: HashMap Source Code",
-          "url": "https://github.com/openjdk/jdk/blob/master/src/java.base/share/classes/java/util/HashMap.java"
-        }
-      ],
-      "interviewTip": "Explain why table size is strictly a power of 2: Because '(n - 1) & hash' is equivalent to 'hash % n' only when n is 2^k, and bitwise AND is exponentially faster than division.",
+      "content": "## HashMap Internals\n\n```java\nstatic final int hash(Object key) {\n    int h;\n    return (key == null) ? 0 : (h = key.hashCode()) ^ (h >>> 16);\n}\nint index = (n - 1) & hash; // fast modulo, n must be power of 2\n```\n\n### Treeification\nJava 8 converts bucket to Red-Black Tree when bucket length >= TREEIFY_THRESHOLD (8) AND table capacity >= MIN_TREEIFY_CAPACITY (64). Reverts to linked list when <= UNTREEIFY_THRESHOLD (6).\n\n### ConcurrentHashMap vs Hashtable\n- Hashtable: single monitor lock on entire map — all threads queue\n- ConcurrentHashMap Java 8+: CAS for empty buckets, synchronized on bucket head for collision chains — different buckets write in parallel",
+      "references": [{"title": "OpenJDK HashMap Source", "url": "https://github.com/openjdk/jdk/blob/master/src/java.base/share/classes/java/util/HashMap.java"}],
+      "interviewTip": "Table size is always power of 2 so (n-1) & hash equals hash % n via bitwise AND — exponentially faster than division.",
       "lastUpdated": "2026-10-22",
       "status": "not-started"
     },
@@ -40,22 +30,11 @@
       "category": "Java & Spring Boot",
       "subcategory": "Java Core & Concurrency",
       "difficulty": "hard",
-      "tags": [
-        "java-21",
-        "virtual-threads",
-        "loom",
-        "concurrency",
-        "carrier-threads"
-      ],
-      "summary": "How Virtual Threads decouple thread creation from OS threads, unmounting during blocking I/O to achieve massive concurrency.",
-      "content": "## Java 21 Virtual Threads (Project Loom)\n\n### Platform Threads vs Virtual Threads\n\n| Attribute | Platform (OS) Thread | Virtual Thread (Java 21) |\n| :--- | :--- | :--- |\n| **Mapping** | 1:1 with OS Kernel Thread | $M:N$ (Millions of virtual threads onto few carrier threads) |\n| **Memory Stack** | ~1MB fixed OS stack | Starts at ~few hundred bytes in JVM heap, grows dynamically |\n| **Creation Cost** | Expensive (system call to OS) | Negligible (cheap Java heap object) |\n| **Context Switch** | Slow (kernel trap / CPU register swap) | Fast (user-space JVM continuation unmount) |\n\n### The Continuation Mechanism (Mounting & Unmounting)\nWhen code inside a Virtual Thread calls a blocking operation (`SocketChannel.read()`, `Thread.sleep()`, JDBC query):\n1. The underlying standard library detects the block.\n2. The Virtual Thread **unmounts** from its Carrier Thread (ForkJoinPool worker).\n3. The Carrier Thread is immediately free to run other Virtual Threads.\n4. When I/O completes, the OS notifies the JVM (via epoll/kqueue), and the Virtual Thread is **mounted back** onto any available Carrier Thread.\n\n```\n100,000 Virtual Threads ──► [JVM Scheduler] ──► 8 Carrier OS Threads (CPU Cores)\n```\n\n### Pinning Trap: What to Avoid\nA Virtual Thread becomes **pinned** to its carrier thread (cannot unmount) if it blocks inside:\n1. A `synchronized` block/method (Replace with `ReentrantLock`!).\n2. A native JNI method call.",
-      "references": [
-        {
-          "title": "JEP 444: Virtual Threads",
-          "url": "https://openjdk.org/jeps/444"
-        }
-      ],
-      "interviewTip": "Emphasize that Virtual Threads are intended for high-throughput I/O-bound microservices, NOT CPU-intensive tasks (where carrier threads would remain fully occupied).",
+      "tags": ["java-21", "virtual-threads", "loom", "concurrency", "carrier-threads"],
+      "summary": "Virtual Threads decouple thread creation from OS threads by unmounting during blocking I/O.",
+      "content": "## Virtual Threads (Project Loom)\n\n```java\n// Create millions of virtual threads\ntry (var executor = Executors.newVirtualThreadPerTaskExecutor()) {\n    for (int i = 0; i < 1_000_000; i++)\n        executor.submit(() -> { Thread.sleep(1000); return null; });\n}\n```\n\n### Key Concepts\n- **Carrier thread**: platform/OS thread that runs virtual threads\n- **Mount/Unmount**: when virtual thread blocks (I/O, sleep), it unmounts from carrier; carrier picks up another virtual thread\n- **Pinning**: virtual thread stays mounted if inside synchronized block or native frame — use ReentrantLock instead\n\n### Spring Boot + Virtual Threads (3.2+)\n```yaml\nspring:\n  threads:\n    virtual:\n      enabled: true\n```\n\n### When to Use\n- High-concurrency I/O bound workloads (REST APIs, DB calls)\n- Replace thread pools sized for blocking — now use virtual threads per request\n- NOT for CPU-bound — no benefit (still limited by CPU cores)",
+      "references": [{"title": "JEP 444: Virtual Threads", "url": "https://openjdk.org/jeps/444"}],
+      "interviewTip": "Key interview point: Virtual threads do NOT improve CPU-bound tasks. They shine for I/O-bound workloads where threads spend most time waiting. Avoid synchronized blocks — they pin the carrier thread.",
       "lastUpdated": "2026-10-22",
       "status": "not-started"
     },
@@ -65,21 +44,11 @@
       "category": "Java & Spring Boot",
       "subcategory": "Java Core & Concurrency",
       "difficulty": "hard",
-      "tags": [
-        "concurrency",
-        "threadpoolexecutor",
-        "queues",
-        "rejection-policy"
-      ],
-      "summary": "Master ThreadPoolExecutor sizing formulas, core vs max pool dynamics, bounded vs unbounded queues, and rejection policies.",
-      "content": "## ThreadPoolExecutor Deep Dive\n\n### Core Execution Flow\nWhen a new task is submitted via `execute(Runnable)`:\n1. If `activeThreads < corePoolSize`: Create a new worker thread to run the task immediately.\n2. If `activeThreads >= corePoolSize`: Attempt to enqueue the task into the **WorkQueue**.\n3. If queue is full AND `activeThreads < maxPoolSize`: Spawn a new non-core thread to run the task.\n4. If queue is full AND `activeThreads >= maxPoolSize`: Invoke the **RejectedExecutionHandler**!\n\n```\nTask Submitted \n      │\n      ▼\nactive < corePoolSize? ──(Yes)──► Create Core Thread\n      │ (No)\n      ▼\nEnqueue into WorkQueue? ──(Yes)──► Queued for Worker\n      │ (No, Queue Full!)\n      ▼\nactive < maxPoolSize? ──(Yes)──► Create Non-Core Thread\n      │ (No, Pool Full!)\n      ▼\nInvoke Rejection Policy (Abort / CallerRuns / Discard)\n```\n\n### Production Configuration Example\n```java\nThreadPoolExecutor executor = new ThreadPoolExecutor(\n    10,                                  // corePoolSize\n    50,                                  // maximumPoolSize\n    60L, TimeUnit.SECONDS,               // keepAliveTime for idle non-core threads\n    new ArrayBlockingQueue<>(500),       // Bounded queue (Never use unbounded LinkedBlockingQueue in prod!)\n    new NamedThreadFactory(\"order-worker-\"),\n    new ThreadPoolExecutor.CallerRunsPolicy() // Throttles producer by running task on calling thread\n);\n```\n\n### Thread Pool Sizing Formulas\n- **CPU-Bound Tasks**: $\\text{Threads} = \\text{CPU Cores} + 1$ (minimizes context switching).\n- **I/O-Bound Tasks**: $\\text{Threads} = \\text{CPU Cores} \\times \\left(1 + \\frac{\\text{Wait Time}}{\\text{Compute Time}}\\right)$",
-      "references": [
-        {
-          "title": "Brian Goetz: Java Concurrency in Practice",
-          "url": "https://jcip.net/"
-        }
-      ],
-      "interviewTip": "Never use Executors.newFixedThreadPool() or newCachedThreadPool() in production! newFixed uses an unbounded queue (OOM risk) and newCached spawns Integer.MAX_VALUE threads (CPU thrashing).",
+      "tags": ["thread-pool", "executor", "concurrency", "tuning"],
+      "summary": "ThreadPoolExecutor lifecycle, queue strategies, rejection policies, and pool sizing formulas.",
+      "content": "## ThreadPoolExecutor\n\n```java\nnew ThreadPoolExecutor(\n    corePoolSize,    // min threads always alive\n    maximumPoolSize, // max threads under load\n    keepAliveTime,   // idle non-core thread timeout\n    TimeUnit.SECONDS,\n    new LinkedBlockingQueue<>(queueCapacity), // task buffer\n    new ThreadFactory() { ... },\n    new CallerRunsPolicy() // rejection handler\n);\n```\n\n### Thread Addition Logic\n1. If threads < corePoolSize → create new thread\n2. Else if queue not full → add to queue\n3. Else if threads < maximumPoolSize → create new thread\n4. Else → invoke RejectedExecutionHandler\n\n### Rejection Policies\n- AbortPolicy (default): throw RejectedExecutionException\n- CallerRunsPolicy: caller thread executes the task (backpressure)\n- DiscardPolicy: silently drop\n- DiscardOldestPolicy: drop oldest queued task\n\n### Pool Sizing Formula\n- CPU-bound: N_threads = N_cpu + 1\n- I/O-bound: N_threads = N_cpu × (1 + wait_time / service_time)",
+      "references": [{"title": "Java Docs: ThreadPoolExecutor", "url": "https://docs.oracle.com/en/java/docs/api/java.base/java/util/concurrent/ThreadPoolExecutor.html"}],
+      "interviewTip": "LinkedBlockingQueue with default capacity (Integer.MAX_VALUE) effectively disables maximumPoolSize — queue never fills so new threads beyond core are never created. Always set a bounded queue.",
       "lastUpdated": "2026-10-22",
       "status": "not-started"
     },
@@ -89,23 +58,11 @@
       "category": "Java & Spring Boot",
       "subcategory": "JVM & Memory Architecture",
       "difficulty": "expert",
-      "tags": [
-        "jvm",
-        "garbage-collection",
-        "g1gc",
-        "zgc",
-        "metaspace",
-        "oom"
-      ],
-      "summary": "Understand JVM memory spaces, object headers, garbage collection pauses, G1 GC regions, and ZGC sub-millisecond pauses.",
-      "content": "## JVM Memory Model & Modern Garbage Collectors\n\n### Memory Areas\n- **Heap**: Shared across threads. Stores all class instances and arrays. Divided into Young Gen (Eden, S0, S1) and Old Gen.\n- **Stack**: Private per thread. Stores primitive local variables and references to heap objects in Stack Frames.\n- **Metaspace**: Off-heap native memory. Stores class metadata, bytecode, method structures (replaced PermGen in Java 8).\n\n```\nJVM Memory Layout:\n┌────────────────────────────────────────────────────────┐\n│ Heap (Shared, GC-Managed)                              │\n│ ┌─────────────────────────┐  ┌───────────────────────┐ │\n│ │ Young Gen (Eden, S0, S1)│  │ Old Generation (Tenured)│\n│ └─────────────────────────┘  └───────────────────────┘ │\n└────────────────────────────────────────────────────────┘\n┌────────────────────────────────────────────────────────┐\n│ Native Memory (Off-Heap)                               │\n│ ├── Metaspace (Class Metadata)                         │\n│ ├── Thread Stacks (1MB per thread)                     │\n│ └── Direct Byte Buffers (Netty zero-copy I/O)         │\n└────────────────────────────────────────────────────────┘\n```\n\n### G1 GC vs ZGC Comparison\n\n| Feature | G1 GC (Default Java 9+) | ZGC (Production Java 17+) |\n| :--- | :--- | :--- |\n| **Architecture** | Memory divided into ~2,048 equal regions (1MB to 32MB) | Region-based, colored pointers, load barriers |\n| **Pause Times** | 50ms - 200ms (Soft goal tunable via `-XX:MaxGCPauseMillis`) | **Sub-millisecond (< 1ms)** regardless of heap size! |\n| **Max Heap Size** | Up to ~64GB | **Terabytes (up to 16TB)** with zero pause increase |\n| **Compaction** | Incremental evacuation pause | Concurrent compaction while Java threads run |\n\n### Debugging OutOfMemoryError (OOM)\n- `java.lang.OutOfMemoryError: Java heap space`: Memory leak (e.g., static collections, unclosed ThreadLocal, connection leaks).\n- `java.lang.OutOfMemoryError: Metaspace`: Too many dynamically generated classes (CGLIB, classloader leak).\n- **Diagnostics**: Analyze heap dumps using Eclipse Memory Analyzer (MAT) via `-XX:+HeapDumpOnOutOfMemoryError`.",
-      "references": [
-        {
-          "title": "Oracle JVM Garbage Collection Tuning Guide",
-          "url": "https://docs.oracle.com/en/java/javase/17/gctuning/"
-        }
-      ],
-      "interviewTip": "Explain colored pointers and load barriers in ZGC: ZGC stores reference state in pointer metadata bits and intercepts references on the fly to perform concurrent evacuation.",
+      "tags": ["jvm", "heap", "gc", "g1", "zgc", "metaspace"],
+      "summary": "JVM memory regions, GC algorithms, and tuning flags for production Spring Boot services.",
+      "content": "## JVM Memory Architecture\n\n```\nJVM Memory\n├── Heap\n│   ├── Young Gen (Eden + S0 + S1)  ← most allocations here\n│   └── Old Gen (Tenured)           ← long-lived objects\n├── Metaspace (class metadata, replaces PermGen in Java 8+)\n├── Thread Stacks (one per thread, method frames)\n└── Code Cache (JIT-compiled native code)\n```\n\n### GC Algorithm Comparison\n| GC | Pause | Throughput | Best For |\n|---|---|---|---|\n| G1GC (default Java 9+) | Low-medium | High | Balanced, large heaps |\n| ZGC (Java 15+) | Ultra-low (<1ms) | Good | Latency-sensitive APIs |\n| Shenandoah | Ultra-low | Good | Low-latency alternative |\n| SerialGC | High | Highest | Small apps, containers |\n\n### Common JVM Flags\n```bash\n-Xms512m -Xmx2g         # heap min/max\n-XX:+UseG1GC             # GC algorithm\n-XX:MaxGCPauseMillis=200 # G1 pause target\n-XX:+UseZGC              # ZGC for <1ms pauses\n-Xss512k                 # thread stack size\n-XX:MetaspaceSize=256m   # initial metaspace\n```",
+      "references": [{"title": "GraalVM: G1GC vs ZGC", "url": "https://www.graalvm.org/latest/reference-manual/java/compiler/"}],
+      "interviewTip": "OOMError: java.lang.OutOfMemoryError: Java heap space = heap full; GC overhead limit exceeded = GC spending >98% time but reclaiming <2% heap; Metaspace = class loading leak. Each error has a different fix.",
       "lastUpdated": "2026-10-22",
       "status": "not-started"
     },
@@ -115,22 +72,11 @@
       "category": "Java & Spring Boot",
       "subcategory": "Spring Boot Internals",
       "difficulty": "medium",
-      "tags": [
-        "spring-boot",
-        "auto-configuration",
-        "bean-lifecycle",
-        "ioc",
-        "conditions"
-      ],
-      "summary": "How Spring Boot auto-configures beans via @Conditional annotations and standard ApplicationContext lifecycle hooks.",
-      "content": "## Spring Boot Auto-Configuration & IoC Container\n\n### Auto-Configuration Under the Hood\nWhen `@SpringBootApplication` starts:\n1. `@EnableAutoConfiguration` reads configuration class names from:\n   `META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports`.\n2. Each auto-configuration class is evaluated against conditional annotations:\n   - `@ConditionalOnClass`: Applies only if specific JAR classes are in classpath (e.g. `KafkaTemplate.class`).\n   - `@ConditionalOnMissingBean`: Backs off if the developer already declared their own `@Bean`.\n   - `@ConditionalOnProperty`: Evaluates `application.yml` flags.\n\n```java\n@AutoConfiguration\n@ConditionalOnClass(DataSource.class)\n@ConditionalOnProperty(prefix = \"spring.datasource\", name = \"url\")\npublic class DataSourceAutoConfiguration {\n    \n    @Bean\n    @ConditionalOnMissingBean\n    public DataSource dataSource(DataSourceProperties properties) {\n        return properties.initializeDataSourceBuilder().build();\n    }\n}\n```\n\n### Spring Bean Lifecycle Phases\n\n```\n1. BeanDefinition Loading\n2. Instantiation (Constructor call)\n3. Dependency Injection (Field/Setter/Constructor injection)\n4. BeanNameAware / ApplicationContextAware callbacks\n5. BeanPostProcessor: postProcessBeforeInitialization\n6. @PostConstruct / InitializingBean.afterPropertiesSet()\n7. Custom init-method\n8. BeanPostProcessor: postProcessAfterInitialization (AOP Proxies created here!)\n9. Ready for Service\n10. @PreDestroy / DisposableBean.destroy() on context shutdown\n```\n\n### Why Constructor Injection is Mandatory\n- Makes dependencies `final` (immutable thread safety).\n- Prevents `NullPointerException` during unit tests without needing Spring reflection.\n- Detects circular dependencies immediately during startup.",
-      "references": [
-        {
-          "title": "Spring Framework Documentation: Bean Lifecycle",
-          "url": "https://docs.spring.io/spring-framework/reference/core/beans/factory-nature.html"
-        }
-      ],
-      "interviewTip": "Point out that Spring AOP proxies (like @Transactional and @Async) are created in the BeanPostProcessor afterInitialization phase.",
+      "tags": ["spring-boot", "auto-configuration", "bean-lifecycle", "conditional"],
+      "summary": "How @SpringBootApplication triggers auto-config, and bean lifecycle callback hooks.",
+      "content": "## Spring Boot Auto-Configuration\n\n### @SpringBootApplication = 3 annotations\n```java\n@SpringBootConfiguration   // = @Configuration\n@EnableAutoConfiguration   // triggers auto-config\n@ComponentScan             // scans current package\n```\n\n### Auto-Configuration Mechanism\n1. Spring scans META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports\n2. Each AutoConfiguration class has @ConditionalOn* guards\n3. Only loads if conditions met (class on classpath, bean not already defined)\n\n### Key Conditionals\n```java\n@ConditionalOnClass(DataSource.class)      // class on classpath\n@ConditionalOnMissingBean(DataSource.class) // bean not yet defined\n@ConditionalOnProperty(\"spring.datasource.url\") // property present\n```\n\n### Bean Lifecycle Hooks\n```java\n@Component\npublic class MyBean implements InitializingBean, DisposableBean {\n    @PostConstruct void init() { /* after injection */ }\n    @PreDestroy void cleanup() { /* before destroy */ }\n    public void afterPropertiesSet() { /* InitializingBean */ }\n    public void destroy() { /* DisposableBean */ }\n}\n```\n\n### Startup Order: @PostConstruct → afterPropertiesSet() → @EventListener(ApplicationReadyEvent)",
+      "references": [{"title": "Spring Boot Auto-Configuration Docs", "url": "https://docs.spring.io/spring-boot/docs/current/reference/html/using.html#using.auto-configuration"}],
+      "interviewTip": "Use --debug flag or spring.autoconfigure.report=true to see which auto-configurations were applied/skipped and why. Common interview: 'How does Spring Boot DataSource auto-configure?' — answer with @ConditionalOnClass + @ConditionalOnMissingBean.",
       "lastUpdated": "2026-10-22",
       "status": "not-started"
     },
@@ -140,22 +86,11 @@
       "category": "Java & Spring Boot",
       "subcategory": "Spring Boot Internals",
       "difficulty": "hard",
-      "tags": [
-        "spring",
-        "aop",
-        "proxies",
-        "transactional",
-        "cglib"
-      ],
-      "summary": "Understand why self-invocation breaks @Transactional, JDK interface proxies vs CGLIB subclassing, and propagation levels.",
-      "content": "## Spring AOP & Proxy Architecture\n\n### JDK Dynamic Proxy vs CGLIB\nSpring creates a proxy wrapper around your beans to intercept method invocations for cross-cutting concerns (`@Transactional`, `@Async`, `@Cacheable`, `@Secured`):\n\n- **JDK Dynamic Proxy**: Requires the target class to implement an interface. Generates an implementation of that interface at runtime.\n- **CGLIB Proxy** (Spring Boot Default): Generates a dynamic subclass of your target class at runtime via bytecode manipulation. Cannot proxy `final` classes or `final` methods.\n\n```\nCaller ──► [Proxy Object (Intercepts @Transactional, Begins DB Tx)] \n                │\n                ▼\n           [Real Service Bean (Executes business method)]\n                │\n                ▼\n           [Proxy Object (Commits / Rollbacks on RuntimeException)]\n```\n\n### The Self-Invocation Trap (Why @Transactional Fails Silently)\nIf a method inside `OrderService` calls another transactional method in the same class directly:\n\n```java\n@Service\npublic class OrderService {\n\n    public void processOrder(Order order) {\n        // ❌ SELF-INVOCATION BUG!\n        // Calls this.saveToDatabase() directly without passing through the Spring Proxy!\n        // The @Transactional annotation is completely bypassed!\n        saveToDatabase(order); \n    }\n\n    @Transactional\n    public void saveToDatabase(Order order) {\n        orderRepository.save(order);\n    }\n}\n```\n\n### Solutions to Self-Invocation\n1. **Extract to a separate service bean** (Cleanest architectural fix).\n2. **Inject self via `@Lazy`**:\n   ```java\n   @Autowired @Lazy private OrderService self;\n   self.saveToDatabase(order); // Passes through proxy!\n   ```\n3. **Use TransactionTemplate** for programmatic programmatic transactions.",
-      "references": [
-        {
-          "title": "Baeldung: Spring AOP and Proxies",
-          "url": "https://www.baeldung.com/spring-aop"
-        }
-      ],
-      "interviewTip": "Explain why @Transactional only rolls back by default on unchecked exceptions (RuntimeException and Error), NOT checked exceptions (Exception.class), unless specified via 'rollbackFor = Exception.class'.",
+      "tags": ["spring-aop", "proxy", "cglib", "transactional", "aspect"],
+      "summary": "AOP proxy types, self-invocation pitfall, and how @Transactional applies via proxy.",
+      "content": "## Spring AOP & Proxies\n\n### Proxy Types\n- **JDK Dynamic Proxy**: bean implements interface → proxy wraps the interface\n- **CGLIB Proxy**: no interface (or proxyTargetClass=true) → subclass proxy\n\n### @Transactional Self-Invocation Bug\n```java\n@Service\npublic class OrderService {\n    public void createOrder() {\n        saveOrder(); // BUG: direct call bypasses proxy → NO transaction!\n    }\n    @Transactional\n    public void saveOrder() { ... }\n}\n// Fix 1: inject self via @Autowired OrderService self;\n// Fix 2: move saveOrder to separate service\n// Fix 3: @EnableAspectJAutoProxy(exposeProxy=true) + (OrderService)AopContext.currentProxy()\n```\n\n### Custom Aspect\n```java\n@Aspect @Component\npublic class LoggingAspect {\n    @Around(\"@annotation(Loggable)\")\n    public Object log(ProceedingJoinPoint pjp) throws Throwable {\n        log.info(\"Before: {}\", pjp.getSignature());\n        Object result = pjp.proceed();\n        log.info(\"After\");\n        return result;\n    }\n}\n```\n\n### @Transactional Propagation\n- REQUIRED (default): join existing or create new\n- REQUIRES_NEW: always new transaction (suspend outer)\n- SUPPORTS: join if exists, else non-transactional\n- NOT_SUPPORTED: always non-transactional",
+      "references": [{"title": "Spring AOP Documentation", "url": "https://docs.spring.io/spring-framework/docs/current/reference/html/core.html#aop"}],
+      "interviewTip": "@Transactional on private methods silently does nothing — Spring proxy cannot intercept private methods. Also: RuntimeException rolls back by default, checked exceptions do NOT (use rollbackFor=Exception.class).",
       "lastUpdated": "2026-10-22",
       "status": "not-started"
     },
@@ -165,22 +100,249 @@
       "category": "Java & Spring Boot",
       "subcategory": "Spring Security & OAuth2",
       "difficulty": "hard",
-      "tags": [
-        "spring-security",
-        "jwt",
-        "filter-chain",
-        "securitycontext",
-        "oauth2"
-      ],
-      "summary": "Build stateless REST API authentication using OncePerRequestFilter, SecurityFilterChain, and SecurityContextHolder propagation.",
-      "content": "## Spring Security Architecture & Stateless JWT\n\n### The Security Filter Chain Pipeline\nSpring Security is fundamentally a chain of servlet filters (`SecurityFilterChain`) that inspect requests before they reach your `@RestController`.\n\n```\nHTTP Request \n     │\n     ▼\n[CorsFilter] ──► [CsrfFilter] ──► [JwtAuthenticationFilter (Custom)] ──► [AuthorizationFilter] ──► [DispatcherServlet]\n                                               │\n                                       Extract Bearer Token\n                                       Validate Signature & Claims\n                                       Set SecurityContextHolder\n```\n\n### Custom JWT Authentication Filter Implementation\n```java\n@Component\npublic class JwtAuthenticationFilter extends OncePerRequestFilter {\n\n    private final JwtTokenProvider tokenProvider;\n    private final UserDetailsService userDetailsService;\n\n    @Override\n    protected void doFilterInternal(HttpServletRequest request, \n                                    HttpServletResponse response, \n                                    FilterChain filterChain) throws ServletException, IOException {\n        String token = resolveToken(request);\n        \n        if (token != null && tokenProvider.validateToken(token)) {\n            String username = tokenProvider.extractUsername(token);\n            UserDetails userDetails = userDetailsService.loadUserByUsername(username);\n            \n            UsernamePasswordAuthenticationToken authentication = \n                new UsernamePasswordAuthenticationToken(userDetails, null, userDetails.getAuthorities());\n            authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));\n            \n            // Populate SecurityContext for current thread:\n            SecurityContextHolder.getContext().setAuthentication(authentication);\n        }\n        \n        filterChain.doFilter(request, response);\n    }\n}\n```\n\n### Modern SecurityFilterChain Configuration (Spring Security 6+)\n```java\n@Configuration\n@EnableWebSecurity\npublic class SecurityConfig {\n\n    @Bean\n    public SecurityFilterChain securityFilterChain(HttpSecurity http, JwtAuthenticationFilter jwtFilter) throws Exception {\n        return http\n            .csrf(csrf -> csrf.disable()) // Safe to disable for stateless JWT APIs\n            .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))\n            .authorizeHttpRequests(auth -> auth\n                .requestMatchers(\"/api/auth/**\", \"/actuator/health\").permitAll()\n                .requestMatchers(\"/api/admin/**\").hasRole(\"ADMIN\")\n                .anyRequest().authenticated()\n            )\n            .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class)\n            .build();\n    }\n}\n```",
-      "references": [
-        {
-          "title": "Spring Security Architecture Reference",
-          "url": "https://docs.spring.io/spring-security/reference/servlet/architecture.html"
-        }
-      ],
-      "interviewTip": "Explain why SecurityContextHolder uses ThreadLocal by default and how Async tasks require MODE_INHERITABLETHREADLOCAL or DelegatingSecurityContextAsyncTaskExecutor.",
+      "tags": ["spring-security", "jwt", "filter-chain", "authentication"],
+      "summary": "Build stateless JWT auth with custom OncePerRequestFilter and SecurityFilterChain.",
+      "content": "## JWT Authentication in Spring Security\n\n### Custom JWT Filter\n```java\n@Component\npublic class JwtFilter extends OncePerRequestFilter {\n    @Override\n    protected void doFilterInternal(HttpServletRequest req,\n            HttpServletResponse res, FilterChain chain) throws Exception {\n        String token = extractToken(req);\n        if (token != null && jwtUtil.isValid(token)) {\n            UsernamePasswordAuthenticationToken auth =\n                new UsernamePasswordAuthenticationToken(\n                    jwtUtil.getUsername(token), null,\n                    jwtUtil.getAuthorities(token));\n            SecurityContextHolder.getContext().setAuthentication(auth);\n        }\n        chain.doFilter(req, res);\n    }\n}\n```\n\n### SecurityFilterChain Config\n```java\n@Bean\npublic SecurityFilterChain filterChain(HttpSecurity http) throws Exception {\n    return http\n        .csrf(csrf -> csrf.disable())\n        .sessionManagement(s -> s.sessionCreationPolicy(STATELESS))\n        .authorizeHttpRequests(auth -> auth\n            .requestMatchers(\"/api/auth/**\").permitAll()\n            .anyRequest().authenticated())\n        .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class)\n        .build();\n}\n```\n\n### SecurityContextHolder propagation\nDefault: ThreadLocal — works for synchronous code. For reactive/async: use SecurityContextHolder.setStrategyName(MODE_INHERITABLETHREADLOCAL) or use ReactiveSecurityContextHolder for WebFlux.",
+      "references": [{"title": "Spring Security Reference", "url": "https://docs.spring.io/spring-security/reference/servlet/authentication/index.html"}],
+      "interviewTip": "JWT is not encrypted by default — only signed (HS256/RS256). Never put sensitive data in JWT payload — it's base64 encoded, not encrypted. Use RS256 (asymmetric) in production so services can verify without the secret.",
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "java-streams-001",
+      "title": "Java Streams API Deep Dive: Collectors, Parallel & Pitfalls",
+      "category": "Java & Spring Boot",
+      "subcategory": "Java Core & Concurrency",
+      "difficulty": "hard",
+      "tags": ["java", "streams", "collectors", "functional", "parallel-streams"],
+      "summary": "Terminal vs intermediate ops, groupingBy/partitioningBy collectors, and parallel stream pitfalls.",
+      "content": "## Java Streams API\n\n### Intermediate (lazy) vs Terminal (eager)\n```java\nList<String> result = employees.stream()\n    .filter(e -> e.getSalary() > 50000)    // intermediate\n    .map(Employee::getName)                  // intermediate\n    .distinct()                              // intermediate\n    .sorted()                                // intermediate\n    .collect(Collectors.toList());           // terminal — triggers pipeline\n```\n\n### Powerful Collectors\n```java\n// Group employees by department\nMap<String, List<Employee>> byDept =\n    employees.stream().collect(Collectors.groupingBy(Employee::getDept));\n\n// Count per department\nMap<String, Long> countByDept =\n    employees.stream().collect(Collectors.groupingBy(Employee::getDept, Collectors.counting()));\n\n// Average salary per department\nMap<String, Double> avgSalary =\n    employees.stream().collect(Collectors.groupingBy(Employee::getDept,\n        Collectors.averagingDouble(Employee::getSalary)));\n\n// Partition by condition\nMap<Boolean, List<Employee>> partitioned =\n    employees.stream().collect(Collectors.partitioningBy(e -> e.getSalary() > 100000));\n\n// Join names\nString names = employees.stream().map(Employee::getName)\n    .collect(Collectors.joining(\", \", \"[\", \"]\"));\n\n// toMap — careful with duplicate keys!\nMap<Integer, Employee> byId =\n    employees.stream().collect(Collectors.toMap(Employee::getId, e -> e,\n        (e1, e2) -> e1)); // merge function for dups\n```\n\n### FlatMap (unwrap nested collections)\n```java\nList<String> allTags = employees.stream()\n    .flatMap(e -> e.getTags().stream())\n    .distinct().collect(Collectors.toList());\n```\n\n### Parallel Streams — When NOT to Use\n- Small collections (overhead > gain)\n- Shared mutable state (race conditions)\n- Order-sensitive operations\n- Use when: large data, CPU-bound, stateless operations",
+      "interviewTip": "Streams are lazy — intermediate ops build a pipeline, nothing executes until a terminal op. Short-circuit terminals (findFirst, anyMatch) stop processing early. Parallel streams use ForkJoinPool.commonPool() — avoid blocking I/O inside parallel stream.",
+      "references": [{"title": "Java Docs: Stream", "url": "https://docs.oracle.com/en/java/docs/api/java.base/java/util/stream/Stream.html"}],
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "java-opt-001",
+      "title": "Java Optional: Correct Usage & Anti-Patterns",
+      "category": "Java & Spring Boot",
+      "subcategory": "Java Core & Concurrency",
+      "difficulty": "medium",
+      "tags": ["java", "optional", "null-safety", "functional"],
+      "summary": "Optional.map/flatMap chaining, orElseGet vs orElse, and the anti-patterns to avoid.",
+      "content": "## Java Optional\n\n### Core Operations\n```java\nOptional<User> user = findById(id); // returns Optional.empty() if not found\n\n// Safe access chain\nString city = user\n    .map(User::getAddress)\n    .map(Address::getCity)\n    .orElse(\"Unknown\");\n\n// orElse (always evaluates) vs orElseGet (lazy)\nUser result = user.orElse(new User());             // User() always constructed\nUser result = user.orElseGet(() -> new User());    // User() only if absent\n\n// Throw if absent\nUser u = user.orElseThrow(() -> new UserNotFoundException(id));\n\n// Execute if present\nuser.ifPresent(u -> sendEmail(u.getEmail()));\nuser.ifPresentOrElse(u -> send(u), () -> log.warn(\"Not found\"));\n\n// Filter\nOptional<User> admin = user.filter(u -> u.getRole() == ADMIN);\n\n// flatMap for Optional-returning methods\nOptional<String> email = user.flatMap(User::getOptionalEmail);\n```\n\n### Anti-Patterns\n```java\n// WRONG: Optional.get() without isPresent() check\nString name = user.get(); // NoSuchElementException if empty!\n\n// WRONG: Optional as field/parameter/collection element\nprivate Optional<String> name; // unnecessary boxing\nList<Optional<User>> users;    // just use List<User> with null check\n\n// WRONG: Wrapping and immediately unwrapping\nif (Optional.of(value).isPresent()) // just use value != null\n```\n\n### Return Optional from methods that may not find a result\n```java\npublic Optional<User> findByEmail(String email) { ... }\n// Never return Optional<List<T>> — return empty list instead\npublic List<User> findByDept(String dept) { return List.of(); } // not Optional<List>",
+      "interviewTip": "orElse() always evaluates its argument even if Optional is present — use orElseGet() for expensive computations or object creation. Optional is for return types only — never for fields or method parameters.",
+      "references": [{"title": "Java 8 in Action: Optional", "url": "https://www.manning.com/books/java-8-in-action"}],
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "java-cf-001",
+      "title": "CompletableFuture: Async Chaining, Exception Handling & Combining",
+      "category": "Java & Spring Boot",
+      "subcategory": "Java Core & Concurrency",
+      "difficulty": "hard",
+      "tags": ["java", "completable-future", "async", "concurrency", "non-blocking"],
+      "summary": "Chain async operations, handle exceptions, and combine multiple futures without blocking.",
+      "content": "## CompletableFuture\n\n### Basic Async Pipeline\n```java\nCompletableFuture<Order> future = CompletableFuture\n    .supplyAsync(() -> fetchUser(userId), ioExecutor)    // async, different thread\n    .thenApply(user -> buildOrder(user))                  // sync transform (same thread)\n    .thenApplyAsync(order -> enrichOrder(order), ioExecutor) // async transform\n    .thenCompose(order -> saveOrder(order));              // flatMap: order returns CF\n```\n\n### Combining Futures\n```java\n// Run two independently, combine results\nCompletableFuture<User> userFuture = getUser(id);\nCompletableFuture<Account> accountFuture = getAccount(id);\nCompletableFuture<Profile> profile =\n    userFuture.thenCombine(accountFuture, (u, a) -> buildProfile(u, a));\n\n// Wait for ALL\nCompletableFuture.allOf(f1, f2, f3).join();\n\n// First to complete wins\nCompletableFuture.anyOf(f1, f2).thenAccept(result -> handle(result));\n```\n\n### Exception Handling\n```java\nfuture\n    .exceptionally(ex -> { log.error(\"Failed\", ex); return defaultValue; })\n    // OR\n    .handle((result, ex) -> ex != null ? fallback : result) // always called\n    // OR\n    .whenComplete((result, ex) -> { if (ex != null) log.error(ex.getMessage()); });\n```\n\n### Timeout (Java 9+)\n```java\nfuture.orTimeout(3, TimeUnit.SECONDS)         // throw TimeoutException\nfuture.completeOnTimeout(default, 3, SECONDS) // return default\n```\n\n### thenApply vs thenCompose\n- thenApply: Function<T,R> — wraps R in CF (nested CF if R is also CF)\n- thenCompose: Function<T,CF<R>> — flattens (like flatMap)",
+      "interviewTip": "Use custom executors (not common pool) for I/O-bound tasks — the common ForkJoinPool is sized to CPU cores and blocks under I/O. thenApply = map, thenCompose = flatMap (avoids CF<CF<T>>).",
+      "references": [{"title": "Java Docs: CompletableFuture", "url": "https://docs.oracle.com/en/java/docs/api/java.base/java/util/concurrent/CompletableFuture.html"}],
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "java-modern-001",
+      "title": "Java 17/21 Modern Features: Records, Sealed Classes & Pattern Matching",
+      "category": "Java & Spring Boot",
+      "subcategory": "Java Core & Concurrency",
+      "difficulty": "medium",
+      "tags": ["java-17", "java-21", "records", "sealed-classes", "pattern-matching"],
+      "summary": "Records as immutable DTOs, sealed classes for exhaustive modeling, and pattern matching switch.",
+      "content": "## Modern Java Features\n\n### Records (Java 16+) — Immutable DTOs\n```java\n// Replaces: class with final fields, constructor, getters, equals, hashCode, toString\npublic record Point(int x, int y) {}\n\n// Compact constructor (validation)\npublic record Range(int min, int max) {\n    Range { if (min > max) throw new IllegalArgumentException(); }\n}\n\nPoint p = new Point(1, 2);\np.x(); p.y(); // accessor methods (not getX())\n// Records are final — cannot extend\n// Records CAN implement interfaces\n```\n\n### Sealed Classes (Java 17+) — Closed Type Hierarchy\n```java\npublic sealed interface Shape permits Circle, Rectangle, Triangle {}\npublic record Circle(double radius) implements Shape {}\npublic record Rectangle(double w, double h) implements Shape {}\n\n// Exhaustive pattern matching switch (Java 21)\ndouble area = switch (shape) {\n    case Circle c    -> Math.PI * c.radius() * c.radius();\n    case Rectangle r -> r.w() * r.h();\n    case Triangle t  -> ...;\n}; // no default needed — compiler knows all cases\n```\n\n### Pattern Matching instanceof (Java 16+)\n```java\n// Old\nif (obj instanceof String) { String s = (String) obj; ... }\n// New\nif (obj instanceof String s) { s.toUpperCase(); } // binding var\n```\n\n### Text Blocks (Java 15+)\n```java\nString json = \"\"\"\n    {\n      \"name\": \"Alice\",\n      \"age\": 30\n    }\n    \"\"\";\n// No escape sequences needed — indentation stripped automatically\n```\n\n### Switch Expressions (Java 14+)\n```java\nint days = switch (month) {\n    case JANUARY, MARCH -> 31;\n    case FEBRUARY       -> isLeapYear ? 29 : 28;\n    default             -> 30;\n};\n```",
+      "interviewTip": "Records replace Lombok @Data for DTOs — no reflection, compile-time safe, naturally serializable. Sealed classes + pattern matching switch = exhaustive modeling without instanceof chains. Use records as JPA projections (interface-based projections also work).",
+      "references": [{"title": "JEP 395: Records", "url": "https://openjdk.org/jeps/395"}],
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "java-generics-001",
+      "title": "Java Generics: Wildcards, PECS & Type Erasure",
+      "category": "Java & Spring Boot",
+      "subcategory": "Java Core & Concurrency",
+      "difficulty": "hard",
+      "tags": ["java", "generics", "wildcards", "type-erasure", "pecs"],
+      "summary": "Bounded wildcards, PECS mnemonic, type erasure implications, and heap pollution.",
+      "content": "## Java Generics Deep Dive\n\n### Bounded Wildcards & PECS\n**PECS: Producer Extends, Consumer Super**\n```java\n// Producer: read from (covariant)\npublic void process(List<? extends Number> nums) {\n    double sum = 0;\n    for (Number n : nums) sum += n.doubleValue(); // can READ\n    // nums.add(1.0); // COMPILE ERROR — can't write\n}\n\n// Consumer: write to (contravariant)\npublic void addNumbers(List<? super Integer> list) {\n    list.add(42); // can WRITE integers\n    // Integer n = list.get(0); // COMPILE ERROR — only Object returned\n}\n\n// Copy elements: src produces, dest consumes\npublic <T> void copy(List<? extends T> src, List<? super T> dest) {\n    for (T elem : src) dest.add(elem);\n}\n```\n\n### Why List<String> is not List<Object>\n```java\nList<String> strings = new ArrayList<>();\n// List<Object> objs = strings; // COMPILE ERROR — not covariant\n// If allowed: objs.add(42) would corrupt the List<String>!\nList<? extends Object> objs = strings; // OK but read-only\n```\n\n### Type Erasure\n```java\n// At compile time: List<String>, List<Integer>\n// At runtime: both become raw List — generic info erased\nList<String> ls = new ArrayList<>();\nList<Integer> li = new ArrayList<>();\nSystem.out.println(ls.getClass() == li.getClass()); // true!\n```\n\n### @SuppressWarnings(\"unchecked\")\nRequired when casting erased types. Use @SafeVarargs on varargs methods with generics to suppress heap pollution warning.",
+      "interviewTip": "Interview question: 'Why can't we create generic arrays (new T[])?' — type erasure makes T unknown at runtime, so array type check fails. Use List<T> or cast with @SuppressWarnings. PECS is key: if you only read, use extends; if you only write, use super.",
+      "references": [{"title": "Effective Java: Item 31 - Bounded Wildcards", "url": "https://www.oreilly.com/library/view/effective-java/9780134686097/"}],
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "java-collections-001",
+      "title": "Java Collections: ArrayList vs LinkedList vs ArrayDeque & Fail-Fast",
+      "category": "Java & Spring Boot",
+      "subcategory": "Java Core & Concurrency",
+      "difficulty": "medium",
+      "tags": ["java", "collections", "arraylist", "linkedlist", "arraydeque"],
+      "summary": "Internal structure, performance trade-offs, and when to use each collection type.",
+      "content": "## Java Collections Internals\n\n### Performance Comparison\n| Operation | ArrayList | LinkedList | ArrayDeque |\n|---|---|---|---|\n| get(i) | O(1) | O(n) | O(1) head/tail |\n| add(end) | O(1) amortized | O(1) | O(1) amortized |\n| add(middle) | O(n) | O(1)* | O(n) |\n| remove(i) | O(n) | O(1)* | - |\n| Memory | Array + 50% buffer | Node per element (+2 pointers) | Circular array |\n\n*O(1) only with iterator — finding the position is O(n)\n\n### ArrayList Resizing\n```java\n// When capacity exceeded: grows by 50% (newCapacity = oldCapacity * 3/2)\n// new Object[oldCapacity + (oldCapacity >> 1)]\n// Use new ArrayList<>(expectedSize) to pre-size and avoid resizing\n```\n\n### LinkedList: Avoid for Random Access\nLinkedList is actually a Deque — use ArrayDeque instead.\nLinkedList: each node = 2 pointers (~48 bytes overhead) → GC pressure.\n\n### ArrayDeque: Preferred Stack & Queue\n```java\nDeque<Integer> stack = new ArrayDeque<>(); // push/pop\nQueue<Integer> queue = new ArrayDeque<>();  // offer/poll\n// Circular array: amortized O(1) for all operations\n// No null elements allowed (unlike LinkedList)\n```\n\n### Fail-Fast Iterators\n```java\nList<String> list = new ArrayList<>(Arrays.asList(\"a\", \"b\", \"c\"));\nIterator<String> it = list.iterator();\nwhile (it.hasNext()) {\n    String s = it.next();\n    if (s.equals(\"b\")) it.remove(); // OK: use iterator's remove\n    // list.remove(s); // ConcurrentModificationException!\n}\n// CopyOnWriteArrayList: fail-safe (snapshot), no CME, expensive writes\n```",
+      "interviewTip": "ArrayDeque is faster than LinkedList for Stack/Queue use — no GC pressure from node objects. Fail-fast iterators use modCount — thrown CME when structural modification during iteration (not thread-safety related).",
+      "references": [{"title": "Java Docs: ArrayList", "url": "https://docs.oracle.com/en/java/docs/api/java.base/java/util/ArrayList.html"}],
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "java-exc-001",
+      "title": "Java Exception Handling: Checked vs Unchecked & Best Practices",
+      "category": "Java & Spring Boot",
+      "subcategory": "Java Core & Concurrency",
+      "difficulty": "medium",
+      "tags": ["java", "exceptions", "error-handling", "checked", "unchecked"],
+      "summary": "Exception hierarchy, checked vs unchecked philosophy, and production best practices.",
+      "content": "## Java Exception Handling\n\n### Exception Hierarchy\n```\nThrowable\n├── Error (JVM-level: OutOfMemoryError, StackOverflowError) — don't catch\n└── Exception\n    ├── CheckedException (IOException, SQLException) — must catch or declare\n    └── RuntimeException (NPE, IllegalState, ClassCast) — unchecked, optional catch\n```\n\n### Custom Exception Hierarchy\n```java\npublic class AppException extends RuntimeException { // prefer unchecked\n    private final ErrorCode code;\n    public AppException(ErrorCode code, String msg) {\n        super(msg); this.code = code;\n    }\n    public AppException(ErrorCode code, String msg, Throwable cause) {\n        super(msg, cause); this.code = code; // chain: preserve root cause!\n    }\n}\npublic class UserNotFoundException extends AppException {\n    public UserNotFoundException(Long id) {\n        super(ErrorCode.USER_NOT_FOUND, \"User not found: \" + id);\n    }\n}\n```\n\n### try-with-resources (Java 7+)\n```java\ntry (Connection conn = ds.getConnection();\n     PreparedStatement ps = conn.prepareStatement(sql)) {\n    // auto-closed in reverse order even on exception\n    // implements AutoCloseable\n} catch (SQLException e) {\n    throw new DataAccessException(\"DB error\", e); // chain cause!\n}\n```\n\n### Best Practices\n```java\n// WRONG: swallow exception\ntry { doStuff(); } catch (Exception e) {}\n\n// WRONG: log AND rethrow\ntry { doStuff(); } catch (Exception e) { log.error(e); throw e; } // double log!\n\n// CORRECT: wrap and chain\ntry { doStuff(); } catch (IOException e) {\n    throw new ServiceException(\"Failed to process\", e); // keep cause\n}\n```",
+      "interviewTip": "Spring's @ControllerAdvice + @ExceptionHandler is the production way to centralize exception handling. Always chain exceptions (pass cause to constructor) — losing the root cause makes debugging impossible in production.",
+      "references": [{"title": "Effective Java: Item 72 - Favor Unchecked Exceptions", "url": "https://www.oreilly.com/library/view/effective-java/9780134686097/"}],
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "spring-rest-001",
+      "title": "Spring Boot REST API Best Practices: DTOs, Validation & Error Handling",
+      "category": "Java & Spring Boot",
+      "subcategory": "Spring Boot Internals",
+      "difficulty": "medium",
+      "tags": ["spring-boot", "rest", "validation", "dto", "error-handling"],
+      "summary": "Production REST API patterns: DTO separation, Bean Validation, RFC 7807 error response.",
+      "content": "## Spring Boot REST Best Practices\n\n### Controller Structure\n```java\n@RestController\n@RequestMapping(\"/api/v1/orders\")\n@Validated\npublic class OrderController {\n    @PostMapping\n    public ResponseEntity<OrderResponse> create(\n            @Valid @RequestBody CreateOrderRequest request,\n            @RequestHeader(\"X-Idempotency-Key\") String idempotencyKey) {\n        OrderResponse order = orderService.create(request, idempotencyKey);\n        return ResponseEntity.status(HttpStatus.CREATED).body(order);\n    }\n    @GetMapping(\"/{id}\")\n    public ResponseEntity<OrderResponse> get(@PathVariable Long id) {\n        return ResponseEntity.ok(orderService.findById(id));\n    }\n}\n```\n\n### Bean Validation (JSR-380)\n```java\npublic record CreateOrderRequest(\n    @NotBlank String productId,\n    @Positive @Max(100) int quantity,\n    @NotNull @Valid ShippingAddress address\n) {}\n```\n\n### Global Error Handler (RFC 7807 ProblemDetail)\n```java\n@RestControllerAdvice\npublic class GlobalExceptionHandler {\n    @ExceptionHandler(UserNotFoundException.class)\n    public ProblemDetail handleNotFound(UserNotFoundException ex) {\n        ProblemDetail pd = ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, ex.getMessage());\n        pd.setTitle(\"User Not Found\");\n        pd.setProperty(\"timestamp\", Instant.now());\n        return pd;\n    }\n    @ExceptionHandler(MethodArgumentNotValidException.class)\n    public ProblemDetail handleValidation(MethodArgumentNotValidException ex) {\n        ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.BAD_REQUEST);\n        pd.setProperty(\"errors\", ex.getBindingResult().getFieldErrors().stream()\n            .map(e -> e.getField() + \": \" + e.getDefaultMessage()).toList());\n        return pd;\n    }\n}\n```",
+      "interviewTip": "ProblemDetail (RFC 7807) is the Spring Boot 3+ standard error format — use it instead of custom error DTOs. Idempotency keys (UUID per request) prevent duplicate operations on retries — store in Redis with request hash.",
+      "references": [{"title": "Spring Boot REST API Guide", "url": "https://spring.io/guides/tutorials/rest/"}],
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "spring-data-001",
+      "title": "Spring Data JPA: Derived Queries, Projections & Specifications",
+      "category": "Java & Spring Boot",
+      "subcategory": "Spring Data & Testing",
+      "difficulty": "hard",
+      "tags": ["spring-data", "jpa", "hibernate", "query", "pagination"],
+      "summary": "Custom queries, interface projections for performance, and Specification for dynamic filters.",
+      "content": "## Spring Data JPA Advanced\n\n### Derived Query Methods\n```java\nList<User> findByEmailAndStatus(String email, Status status);\nOptional<User> findTopByOrderByCreatedAtDesc(); // top 1\nPage<User> findByDept(String dept, Pageable pageable);\n@Query(\"SELECT u FROM User u WHERE u.email = :email AND u.active = true\")\nOptional<User> findActiveByEmail(@Param(\"email\") String email);\n```\n\n### Interface Projections (SELECT only needed columns)\n```java\npublic interface UserSummary {\n    String getName();\n    String getEmail();\n    // Only 2 columns fetched — much faster than loading entire entity\n}\nList<UserSummary> findByDept(String dept);\n// Or DTO projection with @Query:\n@Query(\"SELECT new com.app.dto.UserDTO(u.name, u.email) FROM User u WHERE u.dept = :dept\")\nList<UserDTO> findDTOByDept(@Param(\"dept\") String dept);\n```\n\n### Specification (Dynamic WHERE clause)\n```java\npublic class UserSpec {\n    public static Specification<User> hasName(String name) {\n        return (root, q, cb) -> name == null ? null : cb.like(root.get(\"name\"), \"%\" + name + \"%\");\n    }\n    public static Specification<User> hasDept(String dept) {\n        return (root, q, cb) -> dept == null ? null : cb.equal(root.get(\"dept\"), dept);\n    }\n}\n// Usage:\nPage<User> users = repo.findAll(\n    Specification.where(UserSpec.hasName(name)).and(UserSpec.hasDept(dept)),\n    PageRequest.of(0, 20, Sort.by(\"name\")));\n```\n\n### @EntityGraph (avoid N+1)\n```java\n@EntityGraph(attributePaths = {\"orders\", \"orders.items\"})\nList<User> findByDept(String dept); // eager load orders+items in ONE query\n```",
+      "interviewTip": "Interface projections are the fastest way to fetch partial data — Spring Data generates SELECT with only projected fields. Never use @OneToMany(fetch=EAGER) — always use @EntityGraph or JOIN FETCH in query to control when to load associations.",
+      "references": [{"title": "Spring Data JPA Docs", "url": "https://docs.spring.io/spring-data/jpa/docs/current/reference/html/"}],
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "spring-test-001",
+      "title": "Spring Boot Testing: JUnit 5, Mockito, Slices & Testcontainers",
+      "category": "Java & Spring Boot",
+      "subcategory": "Spring Data & Testing",
+      "difficulty": "medium",
+      "tags": ["spring-boot", "testing", "junit5", "mockito", "testcontainers"],
+      "summary": "Test slices (@WebMvcTest, @DataJpaTest), Mockito patterns, and Testcontainers for real DBs.",
+      "content": "## Spring Boot Testing Pyramid\n\n### Unit Tests (Mockito)\n```java\n@ExtendWith(MockitoExtension.class)\nclass OrderServiceTest {\n    @Mock OrderRepository repo;\n    @Mock InventoryClient inventoryClient;\n    @InjectMocks OrderService orderService;\n\n    @Test\n    void createOrder_success() {\n        when(inventoryClient.check(\"P1\")).thenReturn(true);\n        when(repo.save(any())).thenReturn(new Order(1L, \"P1\"));\n        ArgumentCaptor<Order> captor = ArgumentCaptor.forClass(Order.class);\n        orderService.create(\"P1\", 2);\n        verify(repo).save(captor.capture());\n        assertEquals(\"P1\", captor.getValue().getProductId());\n    }\n}\n```\n\n### Controller Slice (@WebMvcTest)\n```java\n@WebMvcTest(OrderController.class) // loads ONLY web layer\nclass OrderControllerTest {\n    @Autowired MockMvc mockMvc;\n    @MockBean OrderService orderService; // replace real service\n    @Test\n    void createOrder_returns201() throws Exception {\n        when(orderService.create(any())).thenReturn(new OrderResponse(1L));\n        mockMvc.perform(post(\"/api/v1/orders\")\n            .contentType(APPLICATION_JSON)\n            .content(\"{\\\"productId\\\":\\\"P1\\\",\\\"quantity\\\":2}\"))\n            .andExpect(status().isCreated())\n            .andExpect(jsonPath(\"$.id\").value(1L));\n    }\n}\n```\n\n### Repository Slice + Testcontainers (real PostgreSQL)\n```java\n@DataJpaTest // loads JPA layer only\n@AutoConfigureTestDatabase(replace = NONE) // use real DB\n@Testcontainers\nclass UserRepositoryTest {\n    @Container\n    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>(\"postgres:16\")\n        .withDatabaseName(\"testdb\");\n    @DynamicPropertySource\n    static void props(DynamicPropertyRegistry r) {\n        r.add(\"spring.datasource.url\", postgres::getJdbcUrl);\n    }\n    @Autowired UserRepository repo;\n    @Test void saveUser() { ... }\n}\n```",
+      "interviewTip": "Test slices are faster than @SpringBootTest — only load relevant beans. @WebMvcTest = no DB, @DataJpaTest = no HTTP. Testcontainers with @Container static field = shared container across all tests in class (faster than new container per test).",
+      "references": [{"title": "Testcontainers for Java", "url": "https://testcontainers.com/guides/testing-spring-boot-rest-api-using-testcontainers/"}],
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "spring-actuator-001",
+      "title": "Spring Boot Actuator & Micrometer: Metrics to Prometheus & Grafana",
+      "category": "Java & Spring Boot",
+      "subcategory": "Spring Boot Internals",
+      "difficulty": "medium",
+      "tags": ["spring-boot", "actuator", "micrometer", "prometheus", "monitoring"],
+      "summary": "Expose health, metrics, and custom business metrics via Actuator and Micrometer.",
+      "content": "## Spring Boot Actuator & Micrometer\n\n### Enable Endpoints\n```yaml\nmanagement:\n  endpoints:\n    web:\n      exposure:\n        include: health,info,metrics,prometheus,loggers\n  endpoint:\n    health:\n      show-details: always\n  metrics:\n    tags:\n      application: ${spring.application.name}\n```\n\n### Custom Health Indicator\n```java\n@Component\npublic class KafkaHealthIndicator implements HealthIndicator {\n    @Override\n    public Health health() {\n        try {\n            kafkaAdmin.describeTopics(List.of(\"orders\"));\n            return Health.up().withDetail(\"kafka\", \"reachable\").build();\n        } catch (Exception e) {\n            return Health.down().withException(e).build();\n        }\n    }\n}\n```\n\n### Custom Micrometer Metrics\n```java\n@Service\npublic class OrderService {\n    private final Counter ordersCreated;\n    private final Timer orderProcessingTime;\n\n    public OrderService(MeterRegistry registry) {\n        ordersCreated = registry.counter(\"orders.created\", \"status\", \"success\");\n        orderProcessingTime = registry.timer(\"orders.processing.time\");\n    }\n\n    public Order create(OrderRequest req) {\n        return orderProcessingTime.record(() -> {\n            Order order = doCreate(req);\n            ordersCreated.increment();\n            return order;\n        });\n    }\n}\n```\n\n### PromQL for p99 Latency\n```\nhistogram_quantile(0.99,\n  sum(rate(orders_processing_time_seconds_bucket[5m])) by (le)\n)\n```\n\n### Runtime Log Level Change\n```bash\ncurl -X POST /actuator/loggers/com.app.service.OrderService \\\n  -d '{\"configuredLevel\":\"DEBUG\"}'\n```",
+      "interviewTip": "Change log level at runtime via Actuator without restart — critical for debugging production issues. Expose /actuator/prometheus and scrape with Prometheus. Use @Timed on controller methods for automatic HTTP metrics.",
+      "references": [{"title": "Spring Boot Actuator Docs", "url": "https://docs.spring.io/spring-boot/docs/current/reference/html/actuator.html"}],
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "spring-cache-001",
+      "title": "Spring Cache Abstraction: @Cacheable, Redis TTL & Cache Stampede",
+      "category": "Java & Spring Boot",
+      "subcategory": "Spring Boot Internals",
+      "difficulty": "medium",
+      "tags": ["spring-boot", "cache", "redis", "cacheable", "ttl"],
+      "summary": "@EnableCaching, SpEL-based keys, Redis TTL config, and stampede prevention strategies.",
+      "content": "## Spring Cache Abstraction\n\n### Core Annotations\n```java\n@Service\npublic class UserService {\n    @Cacheable(value = \"users\", key = \"#id\")\n    public User findById(Long id) { return repo.findById(id).orElseThrow(); }\n\n    @CachePut(value = \"users\", key = \"#user.id\") // always update cache\n    public User update(User user) { return repo.save(user); }\n\n    @CacheEvict(value = \"users\", key = \"#id\") // remove from cache\n    public void delete(Long id) { repo.deleteById(id); }\n\n    @CacheEvict(value = \"users\", allEntries = true) // clear entire cache\n    public void clearAll() {}\n\n    @Caching(evict = {@CacheEvict(\"users\"), @CacheEvict(\"userSummaries\")})\n    public void deleteWithCleanup(Long id) { repo.deleteById(id); }\n}\n```\n\n### Conditional Caching\n```java\n@Cacheable(value=\"users\", key=\"#id\",\n    condition=\"#id > 0\",   // cache only if id > 0\n    unless=\"#result == null\")  // don't cache null results\n```\n\n### Redis TTL Configuration\n```java\n@Bean\npublic RedisCacheManager cacheManager(RedisConnectionFactory factory) {\n    RedisCacheConfiguration config = RedisCacheConfiguration.defaultCacheConfig()\n        .entryTtl(Duration.ofMinutes(10))\n        .serializeValuesWith(SerializationPair.fromSerializer(new GenericJackson2JsonRedisSerializer()));\n    return RedisCacheManager.builder(factory)\n        .withCacheConfiguration(\"users\", config.entryTtl(Duration.ofMinutes(5)))\n        .withCacheConfiguration(\"products\", config.entryTtl(Duration.ofHours(1)))\n        .build();\n}\n```\n\n### Cache Stampede Prevention\nWhen cache expires, many requests hit DB simultaneously:\n- **Locking**: only one thread refreshes, others wait\n- **Probabilistic Early Expiration**: randomly refresh before TTL expires\n- **Two-level cache**: Caffeine (L1 in-process) + Redis (L2 distributed)",
+      "interviewTip": "Cache stampede happens when a hot cache key expires — use a distributed lock (Redis SETNX) to let only one thread refresh. @Cacheable does NOT protect against stampede — you need custom locking logic.",
+      "references": [{"title": "Spring Cache Docs", "url": "https://docs.spring.io/spring-framework/docs/current/reference/html/integration.html#cache"}],
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "spring-sec-rbac-001",
+      "title": "Spring Security RBAC: @PreAuthorize, Method Security & OAuth2 Resource Server",
+      "category": "Java & Spring Boot",
+      "subcategory": "Spring Security & OAuth2",
+      "difficulty": "hard",
+      "tags": ["spring-security", "rbac", "preauthorize", "oauth2", "method-security"],
+      "summary": "Method-level security with @PreAuthorize SpEL and JWT OAuth2 Resource Server setup.",
+      "content": "## Spring Security RBAC\n\n### Enable Method Security\n```java\n@Configuration\n@EnableMethodSecurity // replaces deprecated @EnableGlobalMethodSecurity\npublic class SecurityConfig { ... }\n```\n\n### @PreAuthorize Examples\n```java\n@PreAuthorize(\"hasRole('ADMIN')\")\npublic void deleteUser(Long id) { ... }\n\n@PreAuthorize(\"hasAnyRole('ADMIN', 'MANAGER') or #userId == authentication.principal.id\")\npublic UserDTO getUser(Long userId) { ... }\n\n@PreAuthorize(\"@permissionService.canAccess(authentication, #orderId)\")\npublic Order getOrder(Long orderId) { ... } // custom bean check\n\n@PostAuthorize(\"returnObject.owner == authentication.name\")\npublic Document getDocument(Long id) { ... } // check after return\n\n@PreFilter(\"filterObject.owner == authentication.name\")\npublic void processDocuments(List<Document> docs) { ... } // filter input\n```\n\n### OAuth2 Resource Server (JWT validation)\n```yaml\nspring:\n  security:\n    oauth2:\n      resourceserver:\n        jwt:\n          jwk-set-uri: https://auth-server/.well-known/jwks.json\n```\n```java\n@Bean\nSecurityFilterChain chain(HttpSecurity http) throws Exception {\n    return http\n        .oauth2ResourceServer(oauth2 -> oauth2\n            .jwt(jwt -> jwt.jwtAuthenticationConverter(jwtConverter())))\n        .build();\n}\n// Custom converter: extract roles from JWT claims\n@Bean\nJwtAuthenticationConverter jwtConverter() {\n    JwtGrantedAuthoritiesConverter converter = new JwtGrantedAuthoritiesConverter();\n    converter.setAuthoritiesClaimName(\"roles\");\n    converter.setAuthorityPrefix(\"ROLE_\");\n    JwtAuthenticationConverter jwtConverter = new JwtAuthenticationConverter();\n    jwtConverter.setJwtGrantedAuthoritiesConverter(converter);\n    return jwtConverter;\n}\n```",
+      "interviewTip": "hasRole('ADMIN') automatically adds ROLE_ prefix — equivalent to hasAuthority('ROLE_ADMIN'). Use @PreAuthorize with SpEL for fine-grained access (e.g., 'you can only view your own data'). Resource Server validates JWT signature via JWK Set URI — no secret needed.",
+      "references": [{"title": "Spring Security Method Security", "url": "https://docs.spring.io/spring-security/reference/servlet/authorization/method-security.html"}],
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "java-memleak-001",
+      "title": "Java Memory Leaks: Root Causes, Detection & Prevention",
+      "category": "Java & Spring Boot",
+      "subcategory": "JVM & Memory Architecture",
+      "difficulty": "hard",
+      "tags": ["jvm", "memory-leak", "threadlocal", "heap-dump", "profiling"],
+      "summary": "Common Java memory leak patterns and how to detect them with heap dumps and JFR.",
+      "content": "## Java Memory Leaks\n\n### Common Causes\n\n**1. ThreadLocal without remove() (most common in thread pools)**\n```java\n// LEAK: thread pool reuses threads — value persists across requests!\nprivate static final ThreadLocal<User> currentUser = new ThreadLocal<>();\n\nvoid processRequest() {\n    currentUser.set(fetchUser());\n    doWork();\n    currentUser.remove(); // ALWAYS remove in finally block!\n}\n// Fix:\ntry { currentUser.set(user); doWork(); } finally { currentUser.remove(); }\n```\n\n**2. Static collections growing unbounded**\n```java\n// LEAK: static Map never garbage collected\nprivate static final Map<String, byte[]> CACHE = new HashMap<>();\n// Fix: Use WeakHashMap, or limit size with LinkedHashMap eviction:\nnew LinkedHashMap<>(100, 0.75f, true) { protected boolean removeEldestEntry(Map.Entry e) { return size() > 100; } }\n```\n\n**3. Unclosed resources**\n```java\n// LEAK: streams/connections not closed on exception\nInputStream is = new FileInputStream(file);\n// Fix: try-with-resources\ntry (InputStream is = new FileInputStream(file)) { ... }\n```\n\n### Detection\n```bash\n# Heap dump\njmap -dump:format=b,file=heap.hprof <pid>\n# Or add JVM flag: -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/tmp/\n\n# JFR (Java Flight Recorder) — low overhead, production safe\njcmd <pid> JFR.start duration=60s filename=recording.jfr\n```\n\n### Eclipse MAT Analysis\n- Leak Suspects Report → identifies growing objects\n- Dominator Tree → what's holding most memory\n- OQL: SELECT * FROM java.util.HashMap WHERE size > 10000",
+      "interviewTip": "ThreadLocal in thread pools is the #1 cause of memory leaks in Spring Boot apps (HTTP request scope leaks). Always use try-finally to call ThreadLocal.remove(). Heap dump analysis: look for large object arrays or unexpected high-count objects.",
+      "references": [{"title": "Eclipse MAT: Memory Analysis Tool", "url": "https://www.eclipse.org/mat/"}],
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "java-deadlock-001",
+      "title": "Deadlock Detection & Prevention in Java",
+      "category": "Java & Spring Boot",
+      "subcategory": "Java Core & Concurrency",
+      "difficulty": "hard",
+      "tags": ["java", "deadlock", "concurrency", "reentrantlock", "threading"],
+      "summary": "Four Coffman conditions, prevention via lock ordering and tryLock, detection via ThreadMXBean.",
+      "content": "## Deadlock in Java\n\n### Four Conditions for Deadlock\n1. Mutual exclusion (resource held by one thread)\n2. Hold and wait (thread holds a lock while waiting for another)\n3. No preemption (locks can't be forcibly taken)\n4. Circular wait (Thread A waits for B, B waits for A)\n\n### Classic Deadlock Example\n```java\nObject lockA = new Object(), lockB = new Object();\n// Thread 1: synchronized(lockA) → synchronized(lockB)\n// Thread 2: synchronized(lockB) → synchronized(lockA)\n// If Thread1 holds lockA and Thread2 holds lockB — DEADLOCK\n```\n\n### Prevention 1: Lock Ordering\n```java\n// Always acquire locks in same order\nvoid transfer(Account from, Account to, int amount) {\n    Account first = from.id < to.id ? from : to; // consistent order by ID\n    Account second = from.id < to.id ? to : from;\n    synchronized(first) {\n        synchronized(second) {\n            from.debit(amount); to.credit(amount);\n        }\n    }\n}\n```\n\n### Prevention 2: tryLock with timeout (ReentrantLock)\n```java\nReentrantLock lockA = new ReentrantLock();\nReentrantLock lockB = new ReentrantLock();\n\nboolean transfer() throws InterruptedException {\n    if (lockA.tryLock(1, SECONDS)) {\n        try {\n            if (lockB.tryLock(1, SECONDS)) {\n                try { doTransfer(); return true; }\n                finally { lockB.unlock(); }\n            }\n        } finally { lockA.unlock(); }\n    }\n    return false; // retry with backoff\n}\n```\n\n### Detection: ThreadMXBean\n```java\nThreadMXBean tmx = ManagementFactory.getThreadMXBean();\nlong[] deadlocked = tmx.findDeadlockedThreads();\nif (deadlocked != null) {\n    ThreadInfo[] info = tmx.getThreadInfo(deadlocked, true, true);\n    // log thread info + stack traces\n}\n```\n\n### ReentrantLock Advantages over synchronized\n- tryLock(timeout) — avoid deadlock\n- lockInterruptibly() — respond to interruption\n- fairness mode (new ReentrantLock(true))\n- Multiple Condition objects per lock",
+      "interviewTip": "ReentrantLock.tryLock() with timeout is the cleanest deadlock prevention for lock acquisition that may fail. synchronized doesn't offer timeout — once you acquire it, you wait indefinitely. Thread dumps (jstack <pid>) show deadlock chains clearly.",
+      "references": [{"title": "Java Concurrency in Practice: Chapter 10 (Deadlock)", "url": "https://jcip.net/"}],
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "spring-webflux-001",
+      "title": "Spring WebFlux & Project Reactor: When to Use & Key Pitfalls",
+      "category": "Java & Spring Boot",
+      "subcategory": "Spring Boot Internals",
+      "difficulty": "hard",
+      "tags": ["spring-webflux", "reactor", "reactive", "mono", "flux"],
+      "summary": "Mono/Flux operators, backpressure, and when WebFlux beats Spring MVC.",
+      "content": "## Spring WebFlux & Project Reactor\n\n### Core Types\n```java\nMono<User> user = userRepo.findById(id);      // 0 or 1 element\nFlux<Order> orders = orderRepo.findByUser(id); // 0-N elements\n```\n\n### Operator Chaining\n```java\nFlux<OrderDTO> result = orderRepo.findAll()\n    .filter(o -> o.getStatus() == ACTIVE)\n    .map(OrderMapper::toDTO)          // sync transform\n    .flatMap(dto -> enrichAsync(dto)) // async transform (no order guarantee)\n    .take(100)\n    .onErrorResume(ex -> Flux.empty());\n```\n\n### flatMap vs concatMap vs switchMap\n```java\n// flatMap: concurrent, no ordering\n// concatMap: sequential, preserves order, slower\n// switchMap: cancels previous, keeps only latest (autocomplete)\nflux.flatMap(id -> fetch(id))      // concurrent\nflux.concatMap(id -> fetch(id))    // sequential\nflux.switchMap(id -> fetch(id))    // latest-only\n```\n\n### NEVER Block Inside Reactive Chain\n```java\n// WRONG: blocks Netty event loop thread\nMono.fromCallable(() -> blockingRepo.findById(id)) // OK: moves to separate scheduler\n    .subscribeOn(Schedulers.boundedElastic());       // boundedElastic for I/O\n\n// WRONG in reactive chain:\nuser.map(u -> jdbcTemplate.query(...)) // blocks reactor thread!\n```\n\n### WebFlux vs MVC Decision\n| Scenario | Use |\n|---|---||\n| High concurrency, I/O bound | WebFlux |\n| Traditional JDBC (blocking) | MVC |\n| Simple CRUD | MVC (simpler) |\n| SSE / WebSocket streaming | WebFlux |",
+      "interviewTip": "WebFlux doesn't make I/O faster — it uses fewer threads to handle the SAME throughput. If your stack has blocking JDBC, WebFlux doesn't help (use Virtual Threads instead). WebFlux shines with reactive DB drivers (R2DBC) and WebClient.",
+      "references": [{"title": "Project Reactor Reference", "url": "https://projectreactor.io/docs/core/release/reference/"}],
+      "lastUpdated": "2026-10-22",
+      "status": "not-started"
+    },
+    {
+      "id": "spring-profiles-001",
+      "title": "Spring Boot Profiles & @ConfigurationProperties",
+      "category": "Java & Spring Boot",
+      "subcategory": "Spring Boot Internals",
+      "difficulty": "easy",
+      "tags": ["spring-boot", "profiles", "configuration", "config-properties"],
+      "summary": "Environment-specific config, @ConfigurationProperties with validation, and config hierarchy.",
+      "content": "## Spring Boot Profiles & Configuration\n\n### Profile-Specific Files\n```\napplication.yml          # base (always loaded)\napplication-dev.yml      # loaded when 'dev' profile active\napplication-prod.yml     # loaded when 'prod' profile active\n```\n\n### Activate Profile\n```bash\njava -jar app.jar --spring.profiles.active=prod\nexport SPRING_PROFILES_ACTIVE=prod\n# Or in application.yml:\nspring.profiles.active: ${ENVIRONMENT:dev}\n```\n\n### @ConfigurationProperties (preferred over @Value)\n```java\n@ConfigurationProperties(prefix = \"app.payment\")\n@Validated\npublic class PaymentConfig {\n    @NotBlank private String apiKey;\n    @Positive private int timeoutSeconds = 30;\n    @Valid private RetryConfig retry;\n\n    @Data\n    public static class RetryConfig {\n        private int maxAttempts = 3;\n        @Min(100) private long backoffMs = 500;\n    }\n}\n\n// application.yml\napp:\n  payment:\n    api-key: ${PAYMENT_API_KEY}  # from env var\n    timeout-seconds: 10\n    retry:\n      max-attempts: 5\n```\n\n### @Value for Simple Values\n```java\n@Value(\"${app.feature.enabled:false}\") // with default\nprivate boolean featureEnabled;\n```\n\n### @Profile on Beans\n```java\n@Bean\n@Profile(\"dev\")\npublic EmailSender devEmailSender() { return new LoggingEmailSender(); }\n\n@Bean\n@Profile(\"prod\")\npublic EmailSender prodEmailSender() { return new SmtpEmailSender(); }\n```",
+      "interviewTip": "@ConfigurationProperties is better than @Value for complex config — it's type-safe, supports validation, and is testable. For secrets in production: inject via environment variables (SPRING_DATASOURCE_PASSWORD) — never hardcode in yaml files.",
+      "references": [{"title": "Spring Boot Externalized Configuration", "url": "https://docs.spring.io/spring-boot/docs/current/reference/html/features.html#features.external-config"}],
       "lastUpdated": "2026-10-22",
       "status": "not-started"
     }
